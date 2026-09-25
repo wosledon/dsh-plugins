@@ -1,9 +1,0 @@
-{
-  "meta": {
-    "title": "SSH Remote Workspace",
-    "description": "Let an Agent run commands, list directories and read files on remote hosts over SSH; bound per workspace, with host management and a run-history panel."
-  },
-  "panel": {
-    "label": "SSH remote workspace"
-  }
-}
