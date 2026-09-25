@@ -476,6 +476,38 @@ check(
   '分支@' + unsupportedBranch + '，末个 hook@' + lastMeterHook,
 );
 
+/*
+ * 浮层必须渲染四桶分解，而不只是每个模型的总量。
+ *
+ * 「按模型汇总 token 用量」这件事，只显示总量只做了一半：能看出哪个模型花得多，
+ * 看不出花在输入还是输出、缓存命中多少。投影的 wire 数据本来就把每行的 buckets
+ * 一起带过来了，漏渲染它属于"数据到了但没用上"——外观上看不出来，只能靠断言守。
+ */
+check(
+  '浮层有四桶分解容器（stu-popBuckets）',
+  /className:\s*'stu-popBuckets'/.test(source),
+);
+check(
+  '四桶标签全部在 SessionMeter 里出现（键名以字面量列出）',
+  ['bIn', 'bOut', 'bCacheRead', 'bCacheWrite']
+    .every((key) => new RegExp("'" + key + "'").test(meterBody ?? '')),
+  ['bIn', 'bOut', 'bCacheRead', 'bCacheWrite']
+    .filter((key) => !new RegExp("'" + key + "'").test(meterBody ?? '')).join(', '),
+);
+check(
+  '四桶取自 row.buckets 的四个官方字段（不是自己另算）',
+  ['uncachedInputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens']
+    .every((field) => new RegExp('row\\.buckets\\.' + field).test(meterBody ?? '')),
+);
+check(
+  '四桶每个标签配一个数值单元格（不是只有标题）',
+  /stu-popBucketLabel/.test(source) && /stu-popBucketValue/.test(source),
+);
+check(
+  '四桶用 2 列网格（320px 浮层下四项横排会挤到换行、换行后列对不齐）',
+  /\.stu-popBuckets\{[^}]*grid-template-columns:repeat\(2,/.test(cssBlock),
+);
+
 /* ---------------- 7. 席位注册 ---------------- */
 console.log('');
 console.log('[7. 席位注册]');

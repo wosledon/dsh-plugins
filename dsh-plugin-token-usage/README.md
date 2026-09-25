@@ -22,8 +22,11 @@ the browser half cannot compute by itself.
 - **Live session indicator**: a seat in the conversation header utilities slot
   (`conversation.session.header.utilities`, id `token-usage`, order 40). It shows this
   session's total token count; clicking it opens a popover with the per-model breakdown — each
-  model's total, a share bar and its call count. When the session has no reported usage yet,
-  the indicator **renders nothing** instead of leaving an empty badge in the header.
+  model's total, a share bar, its call count, and **the four buckets** (input, output, cache
+  read, cache write). The projection already carries those buckets per row; rendering only the
+  total would answer "which model cost the most" but not "was that input or output, and how
+  much of it was cached". When the session has no reported usage yet, the indicator
+  **renders nothing** instead of leaving an empty badge in the header.
 - **Standalone page**: a sidebar panel icon (`sidebar.panellist`, id `token-usage`, order 30)
   plus a main-area page (`main`, the same key). This page is the **cross-session** table by
   model — model, input, output, cache read, cache write, total and share — sorted by total
@@ -219,7 +222,7 @@ again. If the profile cannot persist settings, the button is disabled and says s
 
 ```powershell
 node scripts/test-fold.mjs        # all passed: 65 assertions
-node scripts/verify-layout.mjs    # all passed: 58 layout and structure assertions
+node scripts/verify-layout.mjs    # all passed: 63 layout and structure assertions
 node scripts/verify-contract.mjs  # all passed: 261 assembly-shape assertions
 ```
 

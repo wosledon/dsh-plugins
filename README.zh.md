@@ -125,7 +125,7 @@ dsh-plugin-scheduled-tasks
 
 dsh-plugin-token-usage
   node scripts/test-fold.mjs            65 项断言
-  node scripts/verify-layout.mjs        58 项断言
+  node scripts/verify-layout.mjs        63 项断言
   node scripts/verify-contract.mjs     261 项断言
 ```
 

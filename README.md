@@ -140,7 +140,7 @@ dsh-plugin-scheduled-tasks
 
 dsh-plugin-token-usage
   node scripts/test-fold.mjs            65 assertions
-  node scripts/verify-layout.mjs        58 assertions
+  node scripts/verify-layout.mjs        63 assertions
   node scripts/verify-contract.mjs     261 assertions
 ```
 

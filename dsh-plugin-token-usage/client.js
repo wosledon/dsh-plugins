@@ -65,6 +65,10 @@ window.__ModuleLoader__.load({
       meterUnsupported: '本 profile 未提供会话投影，无法实时显示。',
       unattributed: '未归属模型',
       attempts: '{count} 次调用',
+      bIn: '输入',
+      bOut: '输出',
+      bCacheRead: '缓存读',
+      bCacheWrite: '缓存写',
       loading: '载入中…',
       close: '关闭',
     };
@@ -98,6 +102,10 @@ window.__ModuleLoader__.load({
       meterUnsupported: 'This profile provides no session projections, so live usage is unavailable.',
       unattributed: 'Unattributed',
       attempts: '{count} calls',
+      bIn: 'In',
+      bOut: 'Out',
+      bCacheRead: 'Cache R',
+      bCacheWrite: 'Cache W',
       loading: 'Loading…',
       close: 'Close',
     };
@@ -151,6 +159,12 @@ window.__ModuleLoader__.load({
       '.stu-popModel{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.stu-popVal{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;white-space:nowrap}',
       '.stu-popHint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}',
+      /* 四桶分解：2 列网格而不是一行四项——浮层宽度 320px，四个中文标签横排会挤到换行， */
+      /* 换行后列与列对不齐，比不显示还难看。 */
+      '.stu-popBuckets{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 12px;margin-top:2px}',
+      '.stu-popBucket{display:flex;align-items:baseline;justify-content:space-between;gap:6px;min-width:0}',
+      '.stu-popBucketLabel{font-style:normal;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.stu-popBucketValue{font-size:11px;line-height:16px;font-weight:500;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums;white-space:nowrap}',
       '.stu-popEmpty{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
     ].join('\n');
 
@@ -469,6 +483,27 @@ window.__ModuleLoader__.load({
         return null;
       }
 
+      /**
+       * 一行模型的四桶分解。
+       *
+       * 投影的 wire 数据本来就把每行的 `buckets` 一起带过来了，早期版本只渲染了
+       * `total`——于是"按模型汇总 token 用量"这件事只做了一半：能看出哪个模型花得多，
+       * 看不出花在输入还是输出、缓存命中多少。四桶里**无值的不渲染**（适配器不上报
+       * 缓存时不写 0），避免把"未上报"画成"确实是 0"。
+       */
+      const bucketCells = (row) => {
+        const items = [
+          ['bIn', row.buckets.uncachedInputTokens],
+          ['bOut', row.buckets.outputTokens],
+          ['bCacheRead', row.buckets.cacheReadTokens],
+          ['bCacheWrite', row.buckets.cacheWriteTokens],
+        ];
+        return h('div', { className: 'stu-popBuckets' },
+          items.map(([key, value]) => h('span', { className: 'stu-popBucket', key },
+            h('i', { className: 'stu-popBucketLabel' }, t(key)),
+            h('b', { className: 'stu-popBucketValue' }, formatExact(value ?? 0)))));
+      };
+
       const list = rows.length === 0
         ? [h('div', { className: 'stu-popEmpty', key: 'empty' }, t('meterEmpty'))]
         : rows.map((row) => h('div', { className: 'stu-popRow', key: row.key },
@@ -481,7 +516,8 @@ window.__ModuleLoader__.load({
             style: { width: (total > 0 ? Math.max(2, Math.round((row.total / total) * 100)) : 0) + '%' },
           })),
           h('div', { className: 'stu-popHint' },
-            row.provider + ' · ' + fill(t('attempts'), { count: row.attempts }))));
+            row.provider + ' · ' + fill(t('attempts'), { count: row.attempts })),
+          bucketCells(row)));
 
       return h('span', { className: 'stu-meterRoot', ref: rootRef },
         h('button', {
