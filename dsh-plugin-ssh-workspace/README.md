@@ -2,13 +2,17 @@
 
 SSH remote workspace: let an Agent actually work on remote hosts, with a management panel.
 
-> **Status: installed into the profile, awaiting a host restart to verify real behaviour.**
-> Both halves are written and the offline self-check passes **113 assertions**, including
-> two negative controls with SHA256-verified restoration. **Not yet verified** is anything
-> on a real machine: whether the host half activates, whether the model sees the tools,
-> and whether SSH actually connects. Host-half changes **require a host restart** — Node's
-> ESM cache is keyed by resolved path, so re-activating the Loader row does not reload the
-> module (observed: the failure still named the old line number).
+> **Status: the host half is verified working on a real machine; SSH connectivity is not.**
+>
+> **Verified:** the plugin activates (`internal.lastBoot.phase = ready`), **all five tools
+> register** (`detail: tools=5`), the model can call them and their results render, the
+> plugin list shows the localised name, and the panel appears in the sidebar. The offline
+> self-check passes 121 assertions, including negative controls with SHA256-verified
+> restoration.
+>
+> **Not yet verified:** connecting to an actual remote host, which needs one configured
+> first. The real behaviour of `ssh_exec` / `ssh_read_file` / `ssh_list_dir`, whether the
+> remote has GNU `find -printf`, and the panel's Run button all wait on that.
 
 ## What it does
 

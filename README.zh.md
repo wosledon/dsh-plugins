@@ -16,6 +16,25 @@
 | [`dsh-plugin-reasoning-effort`](dsh-plugin-reasoning-effort/README.zh.md) | 在「设置 → 模型」里为手工声明的供应商按**每个模型**编辑推理强度 | 空（不注册任何东西） | 有 |
 | [`dsh-plugin-scheduled-tasks`](dsh-plugin-scheduled-tasks/README.zh.md) | 按时间表（cron / 间隔 / 每日 / 每周 / 一次性）唤醒大模型执行提示词任务，带管理面板、按任务的运行记录与对话创建 | 有（调度器、执行引擎、工具、skill） | 有 |
 | [`dsh-plugin-token-usage`](dsh-plugin-token-usage/README.zh.md) | 按模型展示提供方上报的 token 用量：会话内实时指示器 + 跨会话汇总表 | 有（会话投影 + 有界日志扫描） | 有 |
+| [`dsh-plugin-ssh-workspace`](dsh-plugin-ssh-workspace/README.zh.md) | SSH 远程工作区：Agent 在远程主机上执行命令、列目录、读文件；只用私钥认证，带主机管理与执行记录面板 | 有（5 个工具，走系统 `ssh` 客户端） | 有 |
+
+### dsh-plugin-ssh-workspace
+
+让 Agent 通过 SSH 在远程机器上工作。五个面向模型的工具 —— `ssh_hosts`、`ssh_exec`、
+`ssh_list_dir`、`ssh_read_file`、`ssh_probe` —— 外加一个管理主机、手动执行命令、
+回看执行记录的面板。
+
+- **走 Tool，不替换 `fs`/`shell`。** 宿主管线里这两个都是 abstract 服务，理论上可以
+  换掉，但"第三方插件能否在 Agent 可见的作用域覆盖 base 实现"没有验证过，赌它的
+  代价是整套功能不可用。Tool 已经在这台机器上验证可用。代价是 Agent 的**本地**
+  文件工具仍然指向本地工作区。
+- **用系统 `ssh` 客户端，不用 npm 的 SSH 库。** 不带第三方依赖，而且复用机器上已有的
+  `~/.ssh` 与 agent，**私钥永不进本插件的任何存储**。只支持私钥认证，不存任何口令。
+- **`ssh_exec` 会在已配置的主机上执行任意命令。** `hostId` 必填，所以工具不可能连到
+  没配过的主机；`enableTools: false` 可以把整组工具关掉——只想用面板不想让模型碰远端
+  时用这个开关。
+- 远端目录浏览需要 GNU `find -printf`；远端不满足时会返回一条明确错误，而不是静默给
+  空列表。
 
 ### dsh-plugin-reasoning-effort
 

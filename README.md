@@ -16,7 +16,28 @@ host side is ordinary ESM.
 | --- | --- | --- | --- |
 | [`dsh-plugin-reasoning-effort`](dsh-plugin-reasoning-effort/README.md) | Per-model reasoning-effort editor for hand-declared LLM providers, inside Settings → Models | empty (registers nothing) | yes |
 | [`dsh-plugin-scheduled-tasks`](dsh-plugin-scheduled-tasks/README.md) | Runs an LLM task on a schedule (cron / interval / daily / weekly / one-shot), with a management panel, per-task run history and conversational creation | yes (scheduler, runner, tools, skill) | yes |
+| [`dsh-plugin-ssh-workspace`](dsh-plugin-ssh-workspace/README.md) | SSH remote workspace: the Agent runs commands, lists directories and reads files on remote hosts; key auth only, panel for host management and run history | yes (5 tools, via the system `ssh` client) | yes |
 | [`dsh-plugin-token-usage`](dsh-plugin-token-usage/README.md) | Provider-reported token usage grouped by model: a live indicator in the session header plus a cross-session table | yes (session projection + bounded log scan) | yes |
+
+### dsh-plugin-ssh-workspace
+
+Lets the Agent work on remote machines over SSH. Five model-facing tools —
+`ssh_hosts`, `ssh_exec`, `ssh_list_dir`, `ssh_read_file`, `ssh_probe` — plus a panel
+for managing hosts, running commands by hand and reviewing what ran.
+
+- **Tools, not a replaced `fs`/`shell`.** Both are abstract services in the host
+  pipeline, so swapping them is theoretically possible, but "can a third-party plugin
+  override a base implementation at a scope the Agent can see" is unverified, and
+  betting on it costs the whole feature. Tools are already proven on this machine.
+  The cost: the Agent's *local* file tools keep pointing at the local workspace.
+- **The system `ssh` client, not an npm SSH library.** No third-party dependency, and
+  it reuses the `~/.ssh` and agent already on the machine, so a private key never
+  enters this plugin's storage. Key auth only; no password is ever stored.
+- **`ssh_exec` runs arbitrary commands** on a configured host. `hostId` is required,
+  so a tool cannot reach a host that was never configured, and `enableTools: false`
+  turns the whole tool set off for anyone who wants the panel without the risk.
+- Remote directory listings need GNU `find -printf`; an unsatisfied remote returns one
+  clear error rather than a silently empty listing.
 
 ### dsh-plugin-reasoning-effort
 
