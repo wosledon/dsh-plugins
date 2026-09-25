@@ -43,6 +43,11 @@ const daySchema = Schema.object({
  * 否则用户会把一个被截断的数字当成历史总量。
  */
 const summarySchema = Schema.object({
+  /**
+   * 形状版本。缺失（旧数据）或与代码里的 `SUMMARY_SHAPE` 不一致时，
+   * 宿主会立刻重扫而不是等 TTL——插件升级后新增字段能马上生效。
+   */
+  shape: Schema.number(),
   rows: Schema.array(rowSchema).default([]),
   /**
    * 折线图的数据源，按本地日期升序。

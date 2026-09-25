@@ -24,6 +24,7 @@
  *   - 单个会话读失败只跳过它并计数，不让一个坏日志毁掉整次扫描。
  */
 import { applyAttempt, applyTimeline, emptyFold, emptyTimeline, rowsOf, timelineRows } from './fold.js';
+import { SUMMARY_SHAPE } from './constants.js';
 
 /**
  * 时间轴最多保留多少天。
@@ -149,6 +150,9 @@ export async function buildSummary(probe, options = {}) {
   }
 
   return {
+    // 形状版本：字段变化时必须与 SUMMARY_SHAPE 一起递增，否则升级后旧数据
+    // 会被 TTL 挡住而不重扫（折线图会一直空着）。
+    shape: SUMMARY_SHAPE,
     rows: rowsOf(state),
     // 折线图的数据源。缺失时界面必须降级为"不画"，而不是画一条歪的。
     timeline: timelineRows(timeline, TIMELINE_MAX_DAYS),

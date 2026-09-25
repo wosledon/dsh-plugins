@@ -284,8 +284,20 @@ window.__ModuleLoader__.load({
       '.stp-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 12px;border:.5px solid var(--dsw-alias-border-l2);border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:1;cursor:pointer;white-space:nowrap}',
       '.stp-btn:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2)}',
       '.stp-btn:focus-visible{outline:1px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
-      '.stp-btn[data-primary="true"]{border-color:transparent;background:var(--dsw-alias-brand-primary);color:#fff}',
-      '.stp-btn[data-primary="true"]:hover:not(:disabled){opacity:.9;background:var(--dsw-alias-brand-primary)}',
+      /*
+       * 主按钮用「品牌色描边 + 品牌色文字」，**不填色**。
+       *
+       * 原先是 `background:var(--dsw-alias-brand-primary); color:#fff`。主题里
+       * **没有**「与 brand 对照的前景色」令牌（Theme.listTokens 只有 bg/border/
+       * brand/label/state 几族），而 brand-primary 在暗色主题下本身是浅色——
+       * 白字压上去直接看不见。
+       *
+       * 描边式不依赖任何对照假设：brand-primary 是设计来在 bg-base / bg-layer-1
+       * 上可见的强调色，所以"品牌色文字 + 品牌色描边"落在页面背景上，
+       * 明暗两套主题都成立。
+       */
+      '.stp-btn[data-primary="true"]{border-color:var(--dsw-alias-brand-primary);background:transparent;color:var(--dsw-alias-brand-primary)}',
+      '.stp-btn[data-primary="true"]:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2)}',
       '.stp-btn[data-danger="true"]{color:var(--dsw-alias-state-error-primary);border-color:var(--dsw-alias-border-l2)}',
       '.stp-btn:disabled{cursor:default;opacity:.45}',
 

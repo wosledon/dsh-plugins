@@ -12,7 +12,7 @@ import { Config } from './lib/config.js';
 import { createStore } from './lib/store.js';
 import { tokenByModelUnit } from './lib/projection.js';
 import { buildSummary, probeSessionSource } from './lib/summary.js';
-import { CONFIG_NS, DEFAULT_SCAN_LIMIT, SUMMARY_TTL_MS } from './lib/constants.js';
+import { CONFIG_NS, DEFAULT_SCAN_LIMIT, SUMMARY_SHAPE, SUMMARY_TTL_MS } from './lib/constants.js';
 
 export { Config };
 
@@ -159,6 +159,17 @@ export function apply(ctx, rawConfig) {
     if (summary === undefined || !Number.isFinite(summary?.builtAt)) {
       const done = await runScan('首次填充');
       return { scanned: done, reason: 'cold-start' };
+    }
+    /*
+     * 形状版本不匹配 → 立刻重扫，不受 TTL 约束。
+     *
+     * 真机踩过：插件升级新增了 `timeline`，但落盘的旧 summary 仍在 5 分钟 TTL 内，
+     * 宿主判定"还没过期"而不重扫——折线图空着，看起来像功能坏了，实际只是旧数据
+     * 被沿用。有了这一条，升级后的第一次 sweep 就会重扫。
+     */
+    if (summary.shape !== SUMMARY_SHAPE) {
+      const done = await runScan('形状升级');
+      return { scanned: done, reason: 'shape-changed' };
     }
     // 按 TTL 自行续期。
     //

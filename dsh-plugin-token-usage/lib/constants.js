@@ -33,6 +33,16 @@ export const DEFAULT_SCAN_LIMIT = 200;
 export const SUMMARY_TTL_MS = 300_000;
 
 /**
+ * 汇总的**形状版本**。改动 `buildSummary()` 的返回字段时必须递增。
+ *
+ * 没有它就会踩到真实的坑：插件升级后新增了 `timeline`，但落盘的旧 summary
+ * 仍在 TTL（5 分钟）内，于是宿主判定"还没过期"而**不重扫**——界面上折线图
+ * 空着，用户以为功能坏了，其实只是旧数据被沿用。递增这个版本号会让升级后的
+ * 第一次 sweep 立刻重扫，而不是等 TTL。
+ */
+export const SUMMARY_SHAPE = 2;
+
+/**
  * 同一会话内两条 usage 的归并口径。
  *
  * 与官方 `dsh-token-meter` 的 `tokenUsage` 投影保持一致的四个桶：

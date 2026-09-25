@@ -202,6 +202,52 @@ check('原始模型对象未被改动', !('reasoningEfforts' in baseModel) && ba
 const rejected = internals.applyDraft(baseModel, { mode: 'custom', levels: blank, support: 'inherit' });
 check('自定义但无思考等级时保存被拦下', rejected.errorKey === 'errNeedThinking');
 
+/* ------------------------------------------------------------------ */
+console.log('');
+console.log('[主题色：只允许令牌，禁止硬编码颜色]');
+/*
+ * 真机事故：主按钮原本是
+ *   background:var(--dsw-alias-brand-primary); color:#fff
+ * 主题里**没有**「与 brand 对照的前景色」令牌（Theme.listTokens 只有
+ * bg/border/brand/label/state 几族），而 brand-primary 在暗色主题下本身是浅色
+ * ——白字压上去直接看不见。用户报的就是这个。
+ *
+ * 所以规则是硬的：**任何硬编码颜色都不允许**，颜色一律走 --dsw-alias-*。
+ * 这条断言的意义在于它拦得住"能跑、能在浅色下看、切到暗色才瞎"的改动——
+ * 没有任何功能测试会发现它。
+ */
+{
+  const clientText = fs.readFileSync(path.join(root, 'client.js'), 'utf8');
+  // 只检查 CSS 字符串数组里的内容，而且**先剥掉注释**——注释里会引用旧代码
+  // （`color:#fff`）或 issue 号（`#310`），不剥就会变成常红的误报，
+  // 常红的规则最后一定被忽略，比没有规则更糟。
+  const cssMatch = /const CSS = \[([\s\S]*?)\]\.join\(/.exec(clientText);
+  const cssRaw = cssMatch === null ? '' : cssMatch[1];
+  const cssBlock = cssRaw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  check('能定位 CSS 数组', cssMatch !== null);
+  const hex = [...cssBlock.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map((m) => m[0]);
+  check('CSS 里没有十六进制颜色', hex.length === 0, hex.join(', '));
+  const rgb = [...cssBlock.matchAll(/rgba?\(/g)].map((m) => m[0]);
+  check('CSS 里没有 rgb()/rgba() 颜色', rgb.length === 0, String(rgb.length));
+  const named = [...cssBlock.matchAll(/:\s*(black|white|red|green|blue|gray|grey)\b/g)].map((m) => m[0]);
+  check('CSS 里没有颜色关键字', named.length === 0, named.join(', '));
+  // 主按钮尤其要盯：它是唯一会被"填色 + 硬编码前景"诱惑的地方。
+  const primary = /\.pre-btn\[data-primary="true"\]\{([^}]*)\}/.exec(cssBlock);
+  check('主按钮规则存在', primary !== null);
+  check(
+    '主按钮只用 brand 令牌描边与上色，不填色（填色就需要一个不存在的对照色令牌）',
+    primary !== null
+      && /color:var\(--dsw-alias-brand-primary\)/.test(primary[1])
+      && /border-color:var\(--dsw-alias-brand-primary\)/.test(primary[1])
+      && /background:transparent/.test(primary[1]),
+    primary === null ? '未找到' : primary[1],
+  );
+  check(
+    'CSS 里所有颜色声明都走 --dsw-alias-*（无一例外）',
+    [...cssBlock.matchAll(/(?:^|[;{])[^;{}]*?:\s*(?!var\(--dsw-)[^;{}]*(?:#[0-9a-fA-F]{3,8}|rgba?\()/g)].length === 0,
+  );
+}
+
 console.log('');
 if (failures.length > 0) {
   console.log('失败 ' + failures.length + ' 项：');

@@ -250,6 +250,42 @@ console.log('[10. 席位注册必须经 ctx.slots.inject]');
 }
 
 console.log('');
+console.log('[11. 主题色：只允许令牌，禁止硬编码颜色]');
+/*
+ * 真机事故：主按钮原本是
+ *   background:var(--dsw-alias-brand-primary); color:#fff
+ * 主题里**没有**「与 brand 对照的前景色」令牌（Theme.listTokens 只有 bg/border/
+ * brand/label/state 几族），而 brand-primary 在暗色主题下本身是浅色——白字压上去
+ * 直接看不见。
+ *
+ * 这类改动"能跑、浅色下好看、切到暗色才瞎"，没有任何功能测试会发现它。
+ * 所以规则是硬的：颜色一律走 --dsw-alias-*。
+ */
+{
+  // 先剥注释：注释里会引用旧代码（`color:#fff`）或 issue 号（`#310`），
+  // 不剥会变成常红的误报，而常红的规则最后一定被忽略。
+  const cssRaw = (rules.size === 0 ? '' : [...rules.keys()].join('\n'));
+  const cssOnly = source
+    .slice(source.indexOf('const CSS = ['), source.indexOf("].join('" + "')"))
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+  const hex = [...cssOnly.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map((m) => m[0]);
+  check('CSS 里没有十六进制颜色', hex.length === 0, hex.join(', '));
+  const rgb = [...cssOnly.matchAll(/rgba?\(/g)].map((m) => m[0]);
+  check('CSS 里没有 rgb()/rgba() 颜色', rgb.length === 0, String(rgb.length));
+  const primary = /\.stp-btn\[data-primary="true"\]\{([^}]*)\}/.exec(cssOnly);
+  check('主按钮规则存在', primary !== null);
+  check(
+    '主按钮只用 brand 令牌描边与上色，不填色（填色就需要一个不存在的对照色令牌）',
+    primary !== null
+      && /color:var\(--dsw-alias-brand-primary\)/.test(primary[1])
+      && /border-color:var\(--dsw-alias-brand-primary\)/.test(primary[1])
+      && /background:transparent/.test(primary[1]),
+    primary === null ? '未找到' : primary[1],
+  );
+}
+
+console.log('');
 if (failures.length > 0) {
   console.log('失败 ' + failures.length + ' 项：');
   for (const item of failures) console.log('  - ' + item);
