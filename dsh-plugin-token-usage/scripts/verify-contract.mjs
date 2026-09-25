@@ -1255,8 +1255,23 @@ if (clientInternals !== null && typeof clientInternals.readSummary === 'function
   check('捕获到一次完整 raw config 提交', captured.length === 1, '实际 ' + captured.length);
 
   const submitted = captured[0] ?? {};
-  // settings.describe() 的返回形状：internal 住在 user 层。
-  const describeShape = [{ ns: CONFIG_NS, revision: 1, value: submitted, user: submitted }];
+  /*
+   * `describe()` 返回的是**信封**，不是数组：
+   *   { ok: true, value: { revision, writable, namespaces: [...] } }
+   * 条目在 `value.namespaces` 里，`internal` 在条目的 `value` 层。
+   *
+   * 这里最初写成裸数组 `[{ ns, value }]`，于是**客户端实现和这条测试一起**
+   * 建立在错误假设上：真机上页面永远空（`Array.isArray` 判否直接返回 null），
+   * 而这条测试却"通过"了。现在按真机形状来测，形状写错它就会红。
+   */
+  const describeShape = {
+    ok: true,
+    value: {
+      revision: 1,
+      writable: true,
+      namespaces: [{ ns: CONFIG_NS, revision: 1, value: submitted }],
+    },
+  };
   const readBack = clientInternals.readSummary(describeShape);
   check('浏览器半从宿主写出的 config 里读到了 summary', readBack.summary !== null, fmt(readBack.summary));
   check('浏览器半报告该 profile 可持久化', readBack.persistent === true);
@@ -1276,10 +1291,25 @@ if (clientInternals !== null && typeof clientInternals.readSummary === 'function
   check('两端算出的桶值完全一致',
     JSON.stringify(clientRows.map((row) => row.buckets)) === JSON.stringify(hostRows.map((row) => row.buckets)));
 
-  // 负向对照：把宿主写出的嵌套层级改错，浏览器半必须读不到——证明上面不是假通过。
-  const misplaced = [{ ns: CONFIG_NS, revision: 1, value: { summary }, user: { summary } }];
+  // 负向对照 1：summary 放错层级。
+  const misplaced = {
+    ok: true,
+    value: { revision: 1, namespaces: [{ ns: CONFIG_NS, revision: 1, value: { summary }, user: { summary } }] },
+  };
   check('负向对照：summary 放错层级时浏览器半读不到（证明上一组不是假通过）',
     clientInternals.readSummary(misplaced).summary === null);
+  // 负向对照 2：退回裸数组（我最初的错误假设）也必须读不到。真机返回的是信封，
+  // 这条就是当初让"页面永远空却测试全绿"的那个形状。
+  check('负向对照：describe() 返回裸数组时读不到（真机返回的是信封）',
+    clientInternals.readSummary([{ ns: CONFIG_NS, value: submitted }]).summary === null);
+  // 负向对照 3：Remote 失败信封。
+  check('负向对照：ok !== true 时读不到',
+    clientInternals.readSummary({ ok: false, value: describeShape.value }).summary === null);
+  // 边界：命名空间存在但没有本插件的条目 —— 应视为"可持久化但无数据"，
+  // 而不是"不可持久化"（后者会把刷新按钮禁掉）。
+  const others = { ok: true, value: { revision: 1, namespaces: [{ ns: 'other', value: {} }] } };
+  check('没有本插件条目时 persistent 仍为 true（刷新按钮不该被禁）',
+    clientInternals.readSummary(others).persistent === true && clientInternals.readSummary(others).summary === null);
 
   // 浏览器半的紧凑格式化对宿主真实数值的呈现。
   // 总量 = (900+100+50) + (100+20) = 1170 → 1170/1000 = 1.17 → "1.2K"。

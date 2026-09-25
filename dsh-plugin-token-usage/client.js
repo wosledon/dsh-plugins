@@ -227,15 +227,26 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 从 settings.describe() 的结果里取跨会话汇总。
+     * 从 `remote.settings.describe()` 的结果里取跨会话汇总。
      *
-     * 两层都要看：`internal` 住在**用户层**（`entry.user`），而 resolved 值在
-     * `entry.value`。只读其中一层会在某些 profile 下静默拿到空数据。
+     * **`describe()` 返回的是信封，不是数组。** 真实形状是
+     * `{ ok: true, value: { revision, writable, namespaces: [...] } }`，
+     * 条目在 `response.value.namespaces` 里。当初这里写成
+     * `if (!Array.isArray(entries)) return null`，于是永远判空——
+     * 页面上就只是"没有数据"，不报错、不留痕。
+     * 姊妹插件（已真机验证）读的是同一条路，照它写。
+     *
+     * 层：`entry.value` 是解析后的值（`internal` 通常在这里），
+     * `entry.user` 是用户层原始值。两层都看，用户层优先。
      */
-    function readSummary(entries) {
-      if (!Array.isArray(entries)) return { summary: null, persistent: false };
-      const entry = entries.find((candidate) => candidate?.ns === CONFIG_NS);
-      if (!isObject(entry)) return { summary: null, persistent: false };
+    function readSummary(response) {
+      if (!isObject(response) || response.ok !== true || !isObject(response.value)) {
+        return { summary: null, persistent: false };
+      }
+      const view = response.value;
+      const entries = Array.isArray(view.namespaces) ? view.namespaces : [];
+      const entry = entries.find((candidate) => isObject(candidate) && candidate.ns === CONFIG_NS);
+      if (entry === undefined) return { summary: null, persistent: true };
       const user = isObject(entry.user) ? entry.user : undefined;
       const value = isObject(entry.value) ? entry.value : undefined;
       const summary = (user?.internal?.summary) ?? (value?.internal?.summary) ?? null;
@@ -311,8 +322,8 @@ window.__ModuleLoader__.load({
           return;
         }
         try {
-          const entries = await api.describe();
-          const read = readSummary(entries);
+          const response = await api.describe();
+          const read = readSummary(response);
           setState({ phase: 'ready', summary: read.summary, persistent: read.persistent, error: null });
         } catch (error) {
           setState({
