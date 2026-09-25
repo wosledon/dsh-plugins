@@ -29,16 +29,26 @@ function fail(code, message) {
   return { ok: false, code, message };
 }
 
-/** 输出 schema（value node），所有工具共用。 */
+/**
+ * 输出 schema（**value schema DSL，不是 JSON Schema**）。所有工具共用。
+ *
+ * 两处必须按 DSL 写，写错会被 `defineTool` 直接拒绝，**一个工具都注册不上**：
+ *
+ *   1. **`required` 是节点级布尔标志，不是顶层数组。** 写成 JSON Schema 的
+ *      `required: ['ok']` 会抛
+ *      `unsupported JSON schema: schema.required is not supported by the value schema DSL`。
+ *      真机实测：5 个工具全部失败，`internal.lastBoot.detail` 写着 `tools=0`。
+ *   2. 带上 `additionalProperties: true`，与已真机验证的 scheduled-tasks 一致。
+ */
 const OUTPUT_SCHEMA = {
   type: 'object',
+  additionalProperties: true,
   description: '工具结果：失败时 { ok:false, code, message }，成功时附带数据。',
   properties: {
     ok: { type: 'boolean', required: true, description: '调用是否成功。' },
     code: { type: 'string', description: '失败原因代码（仅失败时）。' },
     message: { type: 'string', description: '面向模型/用户的说明（仅失败时）。' },
   },
-  required: ['ok'],
 };
 
 const renderJson = (value) => JSON.stringify(value ?? null, null, 2);

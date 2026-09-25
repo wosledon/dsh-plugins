@@ -346,6 +346,24 @@ realCheck('工具名清单完整', ['ssh_hosts', 'ssh_exec', 'ssh_list_dir', 'ss
   .every((name) => toolsSource.includes(`name: '${name}'`)));
 realCheck('hostId 在所有远端工具里都是必填', (toolsSource.match(/hostId: HOST_ID/g) ?? []).length === 4, String((toolsSource.match(/hostId: HOST_ID/g) ?? []).length));
 realCheck('工具内部异常被兜成失败结果而不是抛给 Agent', /fail\('INTERNAL'/.test(toolsSource));
+
+/*
+ * `required` 在 value schema DSL 里是**节点级布尔标志**，不是 JSON Schema 的
+ * 顶层数组。写成 `required: ['ok']` 会被 `defineTool` 拒绝：
+ *   unsupported JSON schema: schema.required is not supported by the value schema DSL
+ * 真机实测后果是 5 个工具全部注册失败（`tools=0`）。这条错误**只在真机注册时
+ * 才暴露**——语法检查和纯函数测试都看不见它。
+ *
+ * 检查前**必须先剥注释**：上面这段说明本身就要写出那个错误写法，不剥的话
+ * 规则会对着自己的解释文字判违规（这条断言第一次跑就是这么红的）。
+ */
+const toolsCode = stripComments(toolsSource);
+realCheck('value schema DSL 里不出现 JSON Schema 的 required 数组',
+  !/\brequired:\s*\[/.test(toolsCode), '出现 required: [...] 数组形式');
+realCheck('输出 schema 带 additionalProperties（与已验证的 scheduled-tasks 一致）',
+  /additionalProperties:\s*true/.test(toolsCode));
+realCheck('参数用节点级 required: true',
+  /HOST_ID = \{ type: 'string', required: true/.test(toolsCode));
 realCheck('每个来源调用都有超时（exec.js 里自己累积并按字节封顶）', /truncated/.test(fs.readFileSync(path.join(root, 'lib/exec.js'), 'utf8')));
 realCheck('超时一定杀进程（否则挂住的 ssh 会一直占着宿主）',
   /child\.kill\('SIGKILL'\)/.test(fs.readFileSync(path.join(root, 'lib/exec.js'), 'utf8')));
