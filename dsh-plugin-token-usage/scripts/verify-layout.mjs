@@ -194,15 +194,35 @@ check('不存在 word-break:break-all（中文会逐字换行）', !/word-break\
 
 const innerRule = rules.get('.stu-inner');
 check('根容器 .stu-inner 存在', innerRule !== undefined);
+/*
+ * 这两条断言原先写反了，值此更正——真机事故就是这么来的。
+ *
+ * 原断言：「根容器不写 height:100%」「不自建滚动，交给外壳」。
+ * 实际 `main` 席位**不给**滚动容器：内容超出窗口后连滚动条都没有，后半截直接
+ * 看不见。已发布页面的约定（dsh-client-ui-plugin-manager 的 _.page）是
+ *   height:100%; overflow:auto; 且 `> * { max-width:960px }`
+ * ——页面自己滚，限宽放在子元素上。
+ *
+ * 一个写反的断言比没有断言更坏：它会主动把正确的改法判为违规。
+ */
 check(
-  '根容器不写 height:100%（与外壳滚动容器打架）',
-  innerRule !== undefined && !/(^|;)\s*height\s*:\s*100%/.test(innerRule),
+  '根容器声明 height:100%（main 席位不给滚动容器，页面必须自己占满高度）',
+  innerRule !== undefined && /(^|;)\s*height\s*:\s*100%/.test(innerRule),
   String(innerRule),
 );
-check('根容器有最大宽度约束 max-width:980px', innerRule !== undefined && /max-width\s*:\s*980px/.test(innerRule), String(innerRule));
 check(
-  '根容器不自建滚动（overflow:auto/scroll 交给外壳）',
-  innerRule !== undefined && !/overflow(-[xy])?\s*:\s*(auto|scroll)/.test(innerRule),
+  '根容器自建滚动 overflow:auto（否则超出窗口的内容看不到，也没有滚动条）',
+  innerRule !== undefined && /overflow\s*:\s*auto/.test(innerRule),
+  String(innerRule),
+);
+check(
+  '限宽放在子元素上而不是容器上（容器限宽会与自身滚动打架）',
+  /\.stu-inner>\*\{[^}]*max-width\s*:\s*980px/.test(cssBlock),
+  '需要 .stu-inner>*{width:100%;max-width:980px}',
+);
+check(
+  '根容器不再用 margin:0 auto 居中（那是"限宽在容器上"时代的写法）',
+  innerRule !== undefined && !/margin\s*:\s*0\s+auto/.test(innerRule),
   String(innerRule),
 );
 

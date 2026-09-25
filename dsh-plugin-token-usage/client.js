@@ -136,7 +136,20 @@ window.__ModuleLoader__.load({
 
     /* 全部颜色走 --dsw-alias-* 主题令牌：令牌改名只会降级外观，不会渲染失败。 */
     const CSS = [
-      '.stu-inner{max-width:980px;margin:0 auto;padding:20px 24px 40px;display:flex;flex-direction:column;gap:14px}',
+      /*
+       * 根容器：**自己滚动**，限宽交给子元素。
+       *
+       * 真机事故：原先写成 `max-width:980px;margin:0 auto` 且不自建滚动，
+       * 以为"外壳会滚"。实际 `main` 席位不给滚动容器——超出窗口的内容直接
+       * 看不见，连滚动条都没有。
+       *
+       * 已发布页面的约定（dsh-client-ui-plugin-manager 的 _.page）：
+       *   height:100%; display:flex; flex-direction:column; overflow:auto;
+       *   且 `> * { width:100%; max-width:960px }` —— 限宽在子元素上。
+       * 照它写。
+       */
+      '.stu-inner{box-sizing:border-box;height:100%;display:flex;flex-direction:column;align-items:center;gap:14px;padding:20px 24px 40px;overflow:auto}',
+      '.stu-inner>*{width:100%;max-width:980px}',
       '.stu-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}',
       '.stu-title{font-size:16px;font-weight:600;line-height:24px;color:var(--dsw-alias-label-primary)}',
       '.stu-sub{margin-top:2px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',

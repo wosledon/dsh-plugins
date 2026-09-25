@@ -262,15 +262,23 @@ window.__ModuleLoader__.load({
      * 2. **行内用 grid 而不是 flex**。flex 的 `flex:1` 会让"谁被推到右边"取决于
      *    兄弟元素宽度，元素一多就散。日志行曾复用带 `flex:1` 的标题类，
      *    结果把触发徽标与时间戳顶到最右侧、中间留一大片空白。
-     * 3. **不写 `height:100%`**。主区域高度归外壳管，插件再声明一次就会和外层
-     *    滚动容器打架（双滚动条或高度塌陷）。用 `min-height:100%` 且不自建滚动。
-     * 4. 文案一律 `text-overflow:ellipsis` 截断，不用 `word-break:break-all`——
-     *    中文逐字换行会把一行变成一列。
+     * 3. **根容器自己滚动**。真机事故：原先是
+     *    `.stp-root{min-height:100%}` + 不自建滚动，注释里还写着"主区域高度归
+     *    外壳管"——**这个假设是错的**。`main` 席位不给滚动容器，内容超出窗口后
+     *    连滚动条都没有，后半截直接看不见。
+     *    已发布页面的约定（dsh-client-ui-plugin-manager 的 `_.page`）是
+     *    `height:100%; overflow:auto`，限宽放在子元素上。
+     *    注意 `min-height:100%` 不产生可解析高度，所以子元素写 `height:100%`
+     *    也滚不起来——必须由这一层声明 `height:100%`。
      * 5. 最大宽度 980px：全屏下主区域很宽，不约束会把行内元素拉散。
+     *    （限宽在 `.stp-inner` 上，不在滚动根上——容器既限宽又自滚会打架。）
      */
     const CSS = [
-      '.stp-root{display:flex;flex-direction:column;gap:16px;min-height:100%;box-sizing:border-box;padding:20px 24px 36px;color:var(--dsw-alias-label-primary);font-size:13px;line-height:20px}',
+      '.stp-root{box-sizing:border-box;height:100%;display:flex;flex-direction:column;align-items:center;gap:16px;padding:20px 24px 36px;overflow:auto;color:var(--dsw-alias-label-primary);font-size:13px;line-height:20px}',
       '.stp-root *{box-sizing:border-box}',
+      /*
+       * 限宽子元素：滚动根是 `.stp-root`，这一层只负责把内容约束到 980px。
+       */
       '.stp-inner{display:flex;flex-direction:column;gap:16px;width:100%;max-width:980px}',
 
       /* 头部：标题块 + 右侧操作区 */

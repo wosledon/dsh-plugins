@@ -113,19 +113,35 @@ for (const [selector, body] of rules) {
 }
 check('长文案类没有 word-break:break-all', breakAll.length === 0, breakAll.join(', '));
 
-/* ---------------- 5. 根容器不声明 height:100% ---------------- */
+/* ---------------- 5. 根容器自己滚动 ---------------- */
 console.log('');
-console.log('[5. 根容器高度归外壳]');
+console.log('[5. 根容器自己滚动（main 席位不给滚动容器）]');
 const rootRule = rules.get('.stp-root');
 check('根容器存在', rootRule !== undefined);
-// 用 (^|;) 锚定属性名，避免把 min-height:100% 误判成 height:100%。
+/*
+ * 这两条断言原先写反了，值此更正——真机事故就是这么来的。
+ *
+ * 原断言：「根容器不写 height:100%」「不自建滚动」，注释还写着"主区域高度归外壳"。
+ * 实际 `main` 席位**不给**滚动容器：内容超出窗口后连滚动条都没有，后半截直接看不见。
+ * 已发布页面的约定（dsh-client-ui-plugin-manager 的 `_.page`）是
+ *   height:100% + overflow:auto，限宽放在子元素上。
+ *
+ * 一个写反的断言比没有断言更坏：它会主动把正确的改法判为违规。
+ */
 check(
-  '根容器不写 height:100%',
-  rootRule !== undefined && !/(^|;)\s*height\s*:\s*100%/.test(rootRule),
+  '根容器声明 height:100%（min-height 不产生可解析高度，子元素 height:100% 会落空）',
+  rootRule !== undefined && /(^|;)\s*height\s*:\s*100%/.test(rootRule),
   String(rootRule),
 );
-check('根容器不自建滚动', rootRule !== undefined && !/overflow\s*:\s*auto/.test(rootRule), String(rootRule));
-check('根容器有最大宽度约束', /const CSS[\s\S]*max-width:\s*980px/.test(source));
+check(
+  '根容器自建滚动 overflow:auto（否则超出窗口的内容看不到，也没有滚动条）',
+  rootRule !== undefined && /overflow\s*:\s*auto/.test(rootRule),
+  String(rootRule),
+);
+check(
+  '限宽放在 .stp-inner 子元素上，不在滚动根上（容器既限宽又自滚会打架）',
+  /\.stp-inner\{[^}]*max-width:\s*980px/.test(source) && !/\.stp-root\{[^}]*max-width/.test(source),
+);
 
 /* ---------------- 6. 组件结构 ---------------- */
 console.log('');
