@@ -2,6 +2,7 @@
   "name": "dsh-plugin-scheduled-tasks",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "定时任务：按 cron/间隔定时唤醒大模型执行提示词任务，带管理面板、运行日志与对话创建。",
   "type": "module",
   "icon": "./icon.svg",

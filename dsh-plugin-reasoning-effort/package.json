@@ -2,6 +2,7 @@
   "name": "dsh-plugin-reasoning-effort",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Per-model reasoning-effort editor for custom (hand-declared) LLM providers in DSH Settings → Models.",
   "type": "module",
   "icon": "./icon.svg",

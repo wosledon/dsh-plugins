@@ -152,5 +152,10 @@ dsh-plugin-scheduled-tasks
 
 ## 许可
 
-仓库目前没有 License 文件。在补上之前，版权归作者所有：请把本仓库当作
-source-available，而不是 open source。
+[MIT](LICENSE) © 2026 ledon
+
+你可以自由使用、修改与再分发这些插件（包括商用），只需保留版权声明与许可声明。
+软件按「原样」提供，不附带任何形式的担保。
+
+注意 DSH 本身是另一个产品，有自己的许可。本仓库授权的是**这些插件**，
+不授予 DeepSeek Harness 的任何权利，也不代表其作者对本项目的认可。

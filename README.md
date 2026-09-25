@@ -164,5 +164,12 @@ still break a feature silently.
 
 ## License
 
-No license file is included yet. Until one is added, all rights are reserved by the
-author; treat this repository as source-available rather than open source.
+[MIT](LICENSE) © 2026 ledon
+
+You are free to use, modify and redistribute these plugins, including
+commercially, provided the copyright notice and permission notice are retained.
+The software is provided "as is", without warranty of any kind.
+
+Note that DSH itself is a separate product with its own licence. This repository
+grants rights to *these plugins only* — it does not grant any rights to DeepSeek
+Harness, nor does it imply endorsement by its authors.
