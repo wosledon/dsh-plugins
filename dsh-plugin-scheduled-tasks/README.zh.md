@@ -229,7 +229,7 @@ node scripts/verify-render.mjs    # 全部通过：57 项渲染与交互断言
 | `lib/model.js` | `newTaskId` 形状与唯一性（含 `random` 恒为 0 的健壮性）、`normalizeTask` 的接受/拒绝、`isTaskDue`、`advanceTask` 不改原对象且 `once` 正确停用 |
 | `lib/store.js` | 深拷贝与**活引用**两种 `describe()` 语义下，`appendLog`/`updateLog`/`setRunState` 的内存与磁盘一致性、revision 冲突重试、`logLimit` 裁剪 |
 | 装配形状 | manifest 与补丁合法；`client.js` 以包名注册工厂、`apply` **恰好**注册 `sidebar.panellist` 与 `main`（`id`/`key` 均为 `scheduled-tasks`）；`index.js` 不返回清理函数、同一 ctx 二次 `apply` 幂等、不同 ctx 各自装配；各文件无 `@deepseek-ai/*` 运行时 import |
-| 布局结构 | CSS 类名与 JSX 引用的闭环（无死类、无无样式类）；行/标题类不得带 `flex:1`；行内布局用 grid 显式分列（日志行 `auto minmax(0,1fr) auto`、任务行 `minmax(0,1fr) auto`）；中文长文案不用 `break-all`；根容器不声明 `height:100%` 且不自建滚动 |
+| 布局结构 | CSS 类名与 JSX 引用的闭环（无死类、无无样式类）；行/标题类不得带 `flex:1`；行内布局用 grid 显式分列（日志行 `auto minmax(0,1fr) auto`、任务行 `minmax(0,1fr) auto`）；中文长文案不用 `break-all`；根容器**声明** `height:100%` 并自建 `overflow:auto`（`main` 席位不给滚动容器），限宽放在内层子元素而不是滚动根上 |
 
 **`verify-layout.mjs` 为什么存在**：真机截图暴露的错位（日志行的徽标与时间戳被顶到最右、
 卡片套卡片、分段选择器换行后圆角被切）**任何功能性断言都抓不到**——它们都"渲染成功"。

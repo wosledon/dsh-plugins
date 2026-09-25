@@ -148,7 +148,7 @@ The suites deliberately cover things that ordinary functional tests miss:
 
 - **`verify-layout.mjs`** turns layout conventions into assertions — that a row uses
   explicit grid columns rather than `flex: 1`, that Chinese long text is never
-  `word-break: break-all`, that the root container does not declare `height: 100%`.
+  `word-break: break-all`, that a plugin page root declares `height: 100%` and scrolls itself, since the main slot provides no scrolling container.
   These describe real misalignments that *succeeded* at rendering, so no functional
   test could have caught them.
 - **`verify-render.mjs`** implements a minimal React runtime (real state, real

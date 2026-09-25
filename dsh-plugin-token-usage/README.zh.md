@@ -233,7 +233,7 @@ node scripts/verify-contract.mjs  # 全部通过：292 项装配形状断言
 
 布局约定同样被写成断言（`verify-layout.mjs`）：每个定义出来的 `stu-*` 类都被用到、每个用到的
 类都有定义、颜色只走 `--dsw-alias-*`（唯一例外是那处已记录的 `box-shadow`）、不出现
-`word-break: break-all`、根容器不声明 `height: 100%`，以及**两个组件里所有 hook 都在第一个
+`word-break: break-all`、根容器**必须**声明 `height: 100%` 并自建 `overflow: auto`（`main` 席位不给滚动容器，限宽放在内层子元素上），以及**两个组件里所有 hook 都在第一个
 `return` 之前** —— 违反这条会让整个 slot 变空白（React #310）。
 
 图表的数学是**跑出来**验证的，不是拿正则看源码 —— 图算错了照样渲染成功，只是撒谎。

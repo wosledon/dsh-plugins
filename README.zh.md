@@ -132,7 +132,7 @@ dsh-plugin-token-usage
 这些套件刻意覆盖普通功能测试抓不到的东西：
 
 - **`verify-layout.mjs`** 把布局约定变成可断言规则 —— 行内用显式 grid 列而不是
-  `flex: 1`、中文长文案绝不 `word-break: break-all`、根容器不声明 `height: 100%`。
+  `flex: 1`、中文长文案绝不 `word-break: break-all`、插件的 `main` 页面根容器**声明** `height: 100%` 并自建滚动（`main` 席位不给滚动容器）。
   这些描述的都是**渲染成功**却错位的真实问题，任何功能测试都抓不到。
 - **`verify-render.mjs`** 自己实现了一个极小 React 运行时（真实状态、真实重渲染），
   并驱动页面走完「新建 → 切 tab → 展开记录 → 打开表单 → 切换时间类型」。

@@ -264,8 +264,8 @@ of this package's properties cannot be checked by running it:
 
 Layout conventions are assertions too (`verify-layout.mjs`): every `stu-*` class defined is
 used and every class used is defined, colours only via `--dsw-alias-*` (with the one
-documented `box-shadow` exception), no `word-break: break-all`, the root does not declare
-`height: 100%`, and **all hooks precede the first `return`** in both components — the rule
+documented `box-shadow` exception), no `word-break: break-all`, that the root **declares** `height: 100%` and its own
+`overflow: auto` because the main slot provides no scrolling container, and **all hooks precede the first `return`** in both components — the rule
 whose violation blanks the whole slot with React #310.
 
 The chart maths is asserted by **running** it, not by pattern-matching the source, because a
