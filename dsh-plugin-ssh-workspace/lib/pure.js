@@ -19,9 +19,24 @@ function textOf(value) {
   return trimmed === '' ? null : trimmed;
 }
 
-/** 把任意值收敛成有限数；不可用时返回 null。 */
+/** 把任意值收敛成有限数；不可用时返回 fallback。 */
 function numberOr(value, fallback) {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+/**
+ * 端口归一化：**超范围按"未设置"处理，不做钳位**。
+ *
+ * 一度写成 `Math.min(65535, Math.max(1, port))`，于是 99999 变成 65535。
+ * 那比回落默认值更糟：用户从没填过 65535，插件却会拿着它去连——一个凭空的
+ * 端口，比"用默认值"和"直接报错"都更难查。超出 1..65535 一律回落 22。
+ */
+export function normalisePort(value) {
+  const port = numberOr(value, null);
+  if (port === null) return 22;
+  const rounded = Math.floor(port);
+  if (rounded < 1 || rounded > 65535) return 22;
+  return rounded;
 }
 
 /**
@@ -43,7 +58,7 @@ export function normaliseHosts(list) {
       id: textOf(raw.id) ?? `host-${index}`,
       label: textOf(raw.label) ?? '',
       host,
-      port: Math.min(65535, Math.max(1, Math.floor(numberOr(raw.port, 22)))),
+      port: normalisePort(raw.port),
       user: textOf(raw.user) ?? '',
       identityFile: textOf(raw.identityFile) ?? '',
       sshOptions: Array.isArray(raw.sshOptions)

@@ -1,9 +1,17 @@
-# 插件的 Loader 补丁层。
+# 「SSH 远程工作区」bundle 的补丁层。
 #
-# 这里**不放**任何 insert 行：本插件只需要把自己装进 profile，
-# 不往任何已发布包里插入条目。早先另两个插件在这里 insert 行是另有原因
-# （它们要接管既有的 row），本插件不需要。
+# **必须插入宿主条目行**，否则宿主半根本不会被加载（`apply()` 永远不会跑，
+# 工具也就永远不会注册）。一度以为"装进 profile 就够了"，那是错的：
+# bundle 只是把包放进 profile，真正让宿主半生效的是这一行 insert。
 #
-# 配置的持久化走 `ctx.configEditor.edit()`（按 Loader entry 寻址），
-# 而不是依赖本文件预置行——后者在 bundle-insert 出来的行上没有对应 entry，
-# 写进去不落盘（真实踩过）。
+# 浏览器半不由补丁声明：`dsh-client-modules` 扫描已启用 Loader 条目的
+# package.json `dsh.client` 声明，并通过 `exports["./client"]` 取得浏览器
+# bundle，所以 client.js 会自动进入 window.__DSH_BOOT__。
+#
+# 行 id 在 profile 内必须唯一，同时它也是本插件的**设置命名空间**：
+#   - 客户端写主机列表用 `remote.settings.mutate('ssh-workspace', …)`
+#   - 宿主半 `lib/store.js` 的 `locateEntry()` 按 id 找自己的行
+# 三处必须一致，改名要一起改。
+- insert:
+    - id: ssh-workspace
+      name: 'dsh-plugin-ssh-workspace'

@@ -1,15 +1,19 @@
 /**
  * 配置 schema。
  *
- * 形状用 schemastery 声明，两条来自真机教训：
+ * 形状用 schemastery 声明，三条来自真机教训：
  *
- * 1. **`buildSummary` 返回的每个字段都必须在这里声明。** schemastery 对未声明
- *    字段会剥离或拒绝，于是"代码算出来了但界面拿不到"，且不报错。
+ * 1. **返回给界面的每个字段都必须在这里声明。** schemastery 对未声明字段会剥离
+ *    或拒绝，于是"代码算出来了但界面拿不到"，且不报错。
  * 2. **不要把 `default([])` 当成兜底。** 实测：schemastery **不会**为
  *    `.volatile()` 节点里缺失的嵌套数组填充默认值，旧数据会如实是 `undefined`。
  *    客户端必须容忍字段缺失，而不是假设它一定是空数组。
+ * 3. **导入必须用默认导出** `import Schema from '@deepseek-ai/schemastery'`。
+ *    这个包没有 `Schema` 命名导出，写成 `import { Schema }` 会在**导入期**抛
+ *    `does not provide an export named 'Schema'`——那是模块求值阶段就失败，
+ *    后果是 entry 激活不了、应用起不来，而不是某块功能坏掉。
  */
-import { Schema } from '@deepseek-ai/schemastery';
+import Schema from '@deepseek-ai/schemastery';
 import {
   CONFIG_NS,
   DEFAULT_TIMEOUT_MS,
@@ -19,14 +23,24 @@ import {
   MAX_TIMEOUT_MS,
 } from './constants.js';
 
-/** 一台远程主机。 */
+/**
+ * 一台远程主机。
+ *
+ * **`id` 与 `host` 刻意不是 `required()`。** 一度写成 required，代价是：
+ * 一份被手改过、某台主机少个 `id` 的配置会让**整段 Config 校验失败**——
+ * 而配置校验失败发生在 Loader 载入阶段，后果是这一行激活不了、可能连应用
+ * 都起不来，远重于"少了一台主机"。
+ *
+ * 正确分工是：**schema 接受归一化器能修的东西，由归一化器去修补或丢弃坏行。**
+ * `normaliseHosts()` 本来就会补 id、丢弃没有 host 的行，所以这里放宽即可。
+ */
 const hostSchema = Schema.object({
-  /** 稳定 id，命令与界面都引用它。新建时由宿主生成。 */
-  id: Schema.string().required(),
+  /** 稳定 id，命令与界面都引用它。缺失时由 `normaliseHosts()` 按索引补。 */
+  id: Schema.string(),
   /** 给人看的名字，缺省时用 `user@host`。 */
   label: Schema.string(),
-  /** 主机名或 IP。 */
-  host: Schema.string().required(),
+  /** 主机名或 IP。缺失时该行会被 `normaliseHosts()` 丢弃。 */
+  host: Schema.string(),
   /** 端口。 */
   port: Schema.number().default(22),
   /** 登录用户；缺省时用本机当前用户名。 */

@@ -62,7 +62,19 @@ export function apply(ctx, rawConfig) {
 
   /* ---------------- 工具 ---------------- */
 
-  if (store.getConfig().enableTools !== false && typeof ctx?.tools?.register === 'function') {
+  /*
+   * 用 `ctx.get('tools')` 而**不是** `ctx.tools`。
+   *
+   * Cordis 规则：访问服务**属性**必须先在自己的 `inject` 里声明该服务，否则抛
+   * `cannot get property "tools" without inject`。而这条错误发生在 apply 期间，
+   * 后果是**整行激活失败**（真机实测：`1 entry did not activate`）——正是
+   * "应用起不来"那条路，且诊断里只留一行，界面上看不出是插件的问题。
+   *
+   * `ctx.get()` 是查询语义，不需要预先声明，因此也能优雅处理"这个 profile 没有
+   * tools 服务"的情况：插件其余部分照常工作，而不是整个不激活。
+   */
+  const tools = typeof ctx.get === 'function' ? ctx.get('tools') : undefined;
+  if (store.getConfig().enableTools !== false && tools !== undefined && typeof tools.register === 'function') {
     try {
       const api = {
         getConfig: () => store.getConfig(),
@@ -70,7 +82,7 @@ export function apply(ctx, rawConfig) {
       };
       for (const spec of buildTools(api)) {
         try {
-          const off = ctx.tools.register(spec);
+          const off = tools.register(spec);
           if (typeof off === 'function') cleanups.push(off);
         } catch (error) {
           // 单个工具注册失败不该让其余工具也没了。

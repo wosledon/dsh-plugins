@@ -1,34 +1,35 @@
 {
   "name": "dsh-plugin-ssh-workspace",
   "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
   "description": "SSH remote workspace: let an Agent run commands and read files on remote hosts over SSH, with a management panel.",
   "type": "module",
-  "main": "index.js",
+  "icon": "./icon.svg",
   "exports": {
-    ".": "./index.js"
-  },
-  "dsh": {
-    "client": {
-      "immediately": true
-    }
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "files": [
     "index.js",
     "client.js",
-    "icon.svg",
-    "lib",
+    "lib/**/*.js",
+    "scripts/**/*.mjs",
     "cordis.patch.yml",
+    "icon.svg",
     "README.md",
     "README.zh.md",
     "CONTRACT.md"
   ],
-  "keywords": [
-    "dsh",
-    "dsh-plugin",
-    "ssh",
-    "remote",
-    "workspace"
-  ],
-  "license": "MIT",
-  "author": "ledon"
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
 }

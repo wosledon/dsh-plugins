@@ -475,6 +475,24 @@ window.__ModuleLoader__.load({
       return undefined;
     }
 
-    return { apply, inject: ['settings'] };
+    return {
+      /*
+       * 客户端半的 `inject` 与宿主半**不是一回事**——一度写成 `['settings']`
+       * （那是宿主侧的形状）。客户端要访问的三个服务属性都必须在这里声明：
+       *
+       *   - `slots`           注册席位（访问 ctx.slots）
+       *   - `locale`          注册文案（访问 ctx.locale）
+       *   - `remote` /
+       *     `remote.settings` 读写设置（访问 ctx.remote.settings）
+       *
+       * 漏一个就抛 `cannot get property "x" without inject`，而它在 apply 期间
+       * 抛出意味着**整个客户端半不激活**——界面上是"插件装了但毫无迹象"，
+       * 诊断里只有一行 `1 entry did not activate`，极难定位。
+       *
+       * 取值照抄已真机验证的另两个插件（token-usage / scheduled-tasks）。
+       */
+      inject: ['slots', 'locale', 'remote', 'remote.settings'],
+      apply,
+    };
   },
 });

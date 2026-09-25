@@ -2,9 +2,13 @@
 
 SSH remote workspace: let an Agent actually work on remote hosts, with a management panel.
 
-> **Status: in development, unverified.** The host half is written; the browser half is
-> being written by a subagent. **Not yet done:** syntax check, self-check scripts,
-> install, real-machine restart, push. This note will be removed once all of that is.
+> **Status: installed into the profile, awaiting a host restart to verify real behaviour.**
+> Both halves are written and the offline self-check passes **113 assertions**, including
+> two negative controls with SHA256-verified restoration. **Not yet verified** is anything
+> on a real machine: whether the host half activates, whether the model sees the tools,
+> and whether SSH actually connects. Host-half changes **require a host restart** — Node's
+> ESM cache is keyed by resolved path, so re-activating the Loader row does not reload the
+> module (observed: the failure still named the old line number).
 
 ## What it does
 
