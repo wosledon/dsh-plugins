@@ -641,7 +641,10 @@ check(
  * 每条通道自己的职责（§6a）与"失败要退到另一条"（§6b）。
  */
 const editorPersistBlock = blockAfter(storeCode, 'async function persistViaEditor()');
-check('persistViaEditor() 调用 editor.edit(entry, () => next)', editorPersistBlock !== null && /await editor\.edit\(entry, \(\) => next\)/.test(editorPersistBlock));
+check(
+  'persistViaEditor() 调 editor.edit 且回调接收 (current, inherited)',
+  editorPersistBlock !== null && /await editor\.edit\(entry, \(current, inherited\) =>/.test(editorPersistBlock),
+);
 check(
   'persistViaEditor() 传回的是完整 raw config：显式带 scanLimit',
   editorPersistBlock !== null && /[{,\s]scanLimit,/.test(editorPersistBlock),
@@ -652,12 +655,25 @@ check(
 );
 check(
   'persistViaEditor() 的 next 也摊开了 inherited 与 override（不丢 bundle/补丁提供的值）',
-  editorPersistBlock !== null && /row\.inherited/.test(editorPersistBlock) && /row\.override/.test(editorPersistBlock),
+  editorPersistBlock !== null && /isObject\(inherited\)/.test(editorPersistBlock) && /isObject\(current\)/.test(editorPersistBlock),
 );
 check(
-  'findEntry 找不到条目时 persistViaEditor 抛错（好让 persist 退到另一条通道）',
+  'locateEntry 找不到条目时 persistViaEditor 抛错（好让 persist 退到另一条通道）',
   editorPersistBlock !== null && /throw new Error/.test(editorPersistBlock),
 );
+
+// locateEntry 必须两个来源都试：configuration() 只保证覆盖 active entries，
+// entries() 是更原始的兜底。只依赖其中一个，一旦对方收录口径与假设不符，
+// 就会静默找不到条目、整条通道失效。
+const locateBlock = blockAfter(storeCode, 'function locateEntry()');
+check('locateEntry() 可解析', locateBlock !== null);
+check('locateEntry() 先用 configuration()', locateBlock !== null && /editor\.configuration\(\)/.test(locateBlock));
+check('locateEntry() 再用 entries() 兜底', locateBlock !== null && /editor\.entries\(\)/.test(locateBlock));
+check(
+  'locateEntry() 两条来源都按 id 或包名匹配',
+  locateBlock !== null && /patchIdOf\(candidate\)/.test(locateBlock) && /identity\.packageName/.test(locateBlock),
+);
+check('locateEntry() 都不命中时返回 null（而非抛错）', locateBlock !== null && /return null;/.test(locateBlock));
 
 const settingsPersistBlock = blockAfter(storeCode, 'async function persistViaSettings()');
 check('persistViaSettings() 调 mutate', settingsPersistBlock !== null && /settings\.mutate\(/.test(settingsPersistBlock));
@@ -1072,6 +1088,91 @@ check(
   collided.length === 0,
   collided.join(', '),
 );
+
+/* ------------------------------------------------------------------ */
+section('11. 跨两半的端到端契约：宿主写出的形状，浏览器半必须读得出来');
+/* ------------------------------------------------------------------ */
+
+/*
+ * 这是本脚本里唯一真正跨两半的断言，也是最有价值的一条。
+ *
+ * 数据流是：宿主折叠 → 写进插件配置的 `internal.summary` → settings 服务把它
+ * 投影给客户端 → 浏览器半用 readSummary() 取回。中间任何一处嵌套层级、字段名
+ * 或大小写不一致，界面上都只是"没有数据"，不会报错——这是最难查的一类契约漂移。
+ *
+ * 做法：用**宿主真实的 store** 写一次（编辑器桩捕获它实际提交的完整 raw config），
+ * 再把那份 config 按 settings.describe() 的返回形状包起来，交给**浏览器半真实的**
+ * readSummary/normaliseRows 去读，比对两端得到同一组数字。
+ */
+if (clientInternals !== null && typeof clientInternals.readSummary === 'function') {
+  // 用真实的折叠输出，而不是手搓的行——这样字段名漂移也会被抓到。
+  const liveState = hostFold.foldEvents([
+    { type: 'assistant/message', data: { turn: 1, step: 1, message: { role: 'assistant', source: { kind: 'model', provider: 'stepfun', model: 'step-5-preview' } }, stream: [], usage: { inputTokens: 900, outputTokens: 100, cacheReadTokens: 50 } } },
+    { type: 'assistant/message', data: { turn: 1, step: 2, message: { role: 'assistant', source: { kind: 'model', provider: 'deepseek-account', model: 'deepseek-flash' } }, stream: [], usage: { inputTokens: 100, outputTokens: 20 } } },
+  ]);
+  const hostRows = hostFold.rowsOf(liveState);
+  const summary = {
+    rows: hostRows,
+    scanned: 7,
+    total: 9,
+    truncated: true,
+    skipped: 1,
+    builtAt: 1_700_000_000_000,
+  };
+
+  const captured = [];
+  const captureEditor = {
+    configuration: () => [{
+      entry: { patchId: CONFIG_NS, options: { name: identity.packageName } },
+      inherited: { scanLimit: 200, internal: {} },
+      override: {},
+    }],
+    edit: async (entry, change) => { captured.push(change({}, { scanLimit: 200, internal: {} })); },
+  };
+  const hostStore = store.createStore(
+    { get: (name) => (name === 'configEditor' ? captureEditor : undefined) },
+    { internal: {} },
+    identity,
+  );
+  const wrote = await hostStore.setSummary(summary);
+  check('宿主侧 setSummary 成功（编辑器通道）', wrote === true, String(wrote));
+  check('捕获到一次完整 raw config 提交', captured.length === 1, '实际 ' + captured.length);
+
+  const submitted = captured[0] ?? {};
+  // settings.describe() 的返回形状：internal 住在 user 层。
+  const describeShape = [{ ns: CONFIG_NS, revision: 1, value: submitted, user: submitted }];
+  const readBack = clientInternals.readSummary(describeShape);
+  check('浏览器半从宿主写出的 config 里读到了 summary', readBack.summary !== null, fmt(readBack.summary));
+  check('浏览器半报告该 profile 可持久化', readBack.persistent === true);
+  check('读回的 scanned/total/truncated 与写入一致',
+    readBack.summary?.scanned === 7 && readBack.summary?.total === 9 && readBack.summary?.truncated === true,
+    fmt(readBack.summary));
+  check('读回的 builtAt 与写入一致', readBack.summary?.builtAt === summary.builtAt, fmt(readBack.summary?.builtAt));
+
+  const clientRows = clientInternals.normaliseRows(readBack.summary);
+  check('浏览器半归一出的行数与宿主一致', clientRows.length === hostRows.length, clientRows.length + ' vs ' + hostRows.length);
+  check('浏览器半归一出的顺序与宿主一致（都是按总量降序）',
+    clientRows.map((row) => row.key).join(',') === hostRows.map((row) => row.key).join(','),
+    clientRows.map((row) => row.key).join(','));
+  check('两端算出的每行 total 完全一致',
+    JSON.stringify(clientRows.map((row) => row.total)) === JSON.stringify(hostRows.map((row) => row.total)),
+    JSON.stringify(clientRows.map((row) => row.total)));
+  check('两端算出的桶值完全一致',
+    JSON.stringify(clientRows.map((row) => row.buckets)) === JSON.stringify(hostRows.map((row) => row.buckets)));
+
+  // 负向对照：把宿主写出的嵌套层级改错，浏览器半必须读不到——证明上面不是假通过。
+  const misplaced = [{ ns: CONFIG_NS, revision: 1, value: { summary }, user: { summary } }];
+  check('负向对照：summary 放错层级时浏览器半读不到（证明上一组不是假通过）',
+    clientInternals.readSummary(misplaced).summary === null);
+
+  // 浏览器半的紧凑格式化对宿主真实数值的呈现。
+  // 总量 = (900+100+50) + (100+20) = 1170 → 1170/1000 = 1.17 → "1.2K"。
+  const grand = hostRows.reduce((sum, row) => sum + row.total, 0);
+  check('浏览器半能格式化宿主真实总量（1170 → 1.2K）',
+    clientInternals.formatTokens(grand) === '1.2K', clientInternals.formatTokens(grand));
+} else {
+  check('浏览器半暴露 readSummary（跨半契约可验证）', false, 'clientInternals.readSummary 缺失');
+}
 
 /* ------------------------------------------------------------------ */
 /* 汇总                                                                */

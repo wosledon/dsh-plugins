@@ -216,24 +216,51 @@ type Summary = {
 
 ---
 
-## §7 验证状态
+## §7 跨两半的数据形状契约
+
+数据流是：**宿主折叠 → 写进插件配置的 `internal.summary` → settings 服务投影给客户端 →
+浏览器半 `readSummary()` 取回**。
+
+- **不变式**：宿主写出的 `internal.summary` 形状 = §3.3 的 `Summary`；浏览器半
+  `readSummary()` 必须能从 `settings.describe()` 的返回里取到它。
+- **不变式**：`internal` 住在 **user 层**（`entry.user.internal`）。浏览器半**两层都要看**
+  （`user` 优先，回落 `value`）——只读其中一层会在某些 profile 下静默拿到空数据。
+- **不变式**：两端对同一份 `rows` 必须得出**相同的顺序、相同的每行 `total`、相同的桶值**。
+  宿主侧由 `rowsOf()` 排序，客户端侧由 `normaliseRows()` 归一；两处漂移在界面上只表现为
+  "没有数据"，不会报错。
+- **为什么这条要单独测**：中间任何一处嵌套层级、字段名或大小写不一致，界面都只是
+  "没有数据"——这是最难查的一类契约漂移。`verify-contract.mjs` §11 用**宿主真实的 store**
+  写一次（编辑器桩捕获它实际提交的完整 raw config），再把那份 config 按
+  `settings.describe()` 的返回形状包起来交给**浏览器半真实的** `readSummary` /
+  `normaliseRows` 去读，逐值比对两端结果；并附一条负向对照：把 `summary` 放错层级时
+  浏览器半必须读不到。
+
+---
+
+## §8 验证状态
 
 **已验证**
 
 - `node scripts/test-fold.mjs` —— 65 项断言，零依赖。
+- `node scripts/verify-layout.mjs` —— 58 项布局/主题/文案键/Hook 顺序/席位安全断言。
+- `node scripts/verify-contract.mjs` —— 261 项装配形状断言，其中 §11 是**跨两半的
+  端到端契约**（见 §7）：用宿主真实的 store 写一次，交给浏览器半真实的 `readSummary` /
+  `normaliseRows` 读回，逐值比对，并附负向对照。
 - 宿主 Config 报告 `status: "schema"`，即宿主模块加载成功，也即 `zod`（真机 4.6.5）
   与 `@deepseek-ai/schemastery` 在宿主进程内可解析，且 `lib/projection.js` 里所有
   `z.*` 调用在真实 zod 下合法。
-- 客户端席位 `token-usage` 在 `conversation.session.header.utilities` 中
-  `active: true`，与官方 `open-in-app`、`session-log-download` 并列。
+- 客户端席位 `token-usage` 在 `conversation.session.header.utilities` 与
+  `sidebar.panellist` 中均 `active: true`，与官方的 `open-in-app`、
+  `session-log-download`、`plugins` 并列。
 
 **未验证**
 
+- **视觉呈现**：配色、间距、浅色/深色主题下的对比度，需要真实页面确认。
 - **投影 `wire.view` 的输出没有在离线环境用 zod 校验过**：`zod` 只存在于 DSH 安装包
   （`app.asar`）内，纯 Node 解析不到。风险由两点约束：schema 构造在真机合法（已证），
   且视图数据按构造全为整数（由 `test-fold.mjs` 覆盖）。
-- **视觉呈现**：配色、间距、浅色/深色主题下的对比度，需要真实页面确认。
 - **会话内指示器的真机读数与浮层交互**：需要浏览器控制。
-- **`configEditor` 持久化路径的真机落盘**：改动后需要重启宿主才能载入新的模块代次
+- **`configEditor` 持久化路径的真机落盘**：需要重启宿主才能载入新的模块代次
   （Node 的 ESM 缓存按解析路径命中，`remove_bundle` + `install_bundle` 换不掉已导入
-  的模块）。在重启前，`internal.summary` 是否出现在 profile patch 中属于未验证。
+  的模块）。**在重启前，`internal.summary` / `internal.lastSweep` 是否出现在 profile
+  patch 中属于未验证。** 失败时 `lastSweep.detail` 会带上两条通道各自的报错。

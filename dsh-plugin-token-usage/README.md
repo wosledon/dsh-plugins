@@ -220,10 +220,10 @@ again. If the profile cannot persist settings, the button is disabled and says s
 ```powershell
 node scripts/test-fold.mjs        # all passed: 65 assertions
 node scripts/verify-layout.mjs    # all passed: 58 layout and structure assertions
-node scripts/verify-contract.mjs  # all passed: 244 assembly-shape assertions
+node scripts/verify-contract.mjs  # all passed: 261 assembly-shape assertions
 ```
 
-`verify-contract.mjs` is the one that earns its keep on a plugin like this, because three
+`verify-contract.mjs` is the one that earns its keep on a plugin like this, because four
 of this package's properties cannot be checked by running it:
 
 - **The two halves must agree on constants.** `client.js` cannot import `lib/constants.js`
@@ -235,10 +235,18 @@ of this package's properties cannot be checked by running it:
   `__internals` and compares it against `lib/fold.js` across 16 values plus the
   `-1` / `NaN` / `Infinity` edges. A negative control that flips one threshold in either
   file makes it fail, so the comparison is not a rubber stamp.
+- **The data shape must survive the hop between the halves.** Host folds, writes
+  `internal.summary`, the settings service projects it, the browser reads it back. Any
+  mismatch in nesting, field name or case shows up in the UI as "no data" and never as an
+  error. The script writes once through the host's real store (capturing the complete raw
+  config it submits), wraps that config the way `settings.describe()` returns it, hands it
+  to the browser half's real `readSummary` / `normaliseRows`, and compares both ends row by
+  row — plus a negative control that misplaces `summary` one level up and requires the
+  browser half to find nothing.
 - **Persistence must fall back on failure, not on availability.** `mode` selects a
   preference; `persist()` tries both channels and only reports failure when both throw.
-  The script proves this behaviourally with stubs — a throwing `configEditor` still ends
-  up written through `settings`, and two dead channels return `false`.
+  The script proves this behaviourally with stubs — a throwing `configEditor` still ends up
+  written through `settings`, and two dead channels return `false`.
 
 Layout conventions are assertions too (`verify-layout.mjs`): every `stu-*` class defined is
 used and every class used is defined, colours only via `--dsw-alias-*` (with the one

@@ -200,10 +200,10 @@ profile 无法写入设置时，按钮会禁用并说明原因。
 ```powershell
 node scripts/test-fold.mjs        # 全部通过：65 项断言
 node scripts/verify-layout.mjs    # 全部通过：58 项布局与结构断言
-node scripts/verify-contract.mjs  # 全部通过：244 项装配形状断言
+node scripts/verify-contract.mjs  # 全部通过：261 项装配形状断言
 ```
 
-`verify-contract.mjs` 在这个插件上最值得留着，因为本包有三条性质**没法靠运行它本身**验证：
+`verify-contract.mjs` 在这个插件上最值得留着，因为本包有四条性质**没法靠运行它本身**验证：
 
 - **两半的常量必须一致。** `client.js` 无法 import `lib/constants.js`（浏览器 bundle 只拿到
   `require`），所以 `PANEL_ID`、`CONFIG_NS`、`PROJECTION_KEY`、`TOKEN_BY_MODEL_KEY` 各有两份。
@@ -211,6 +211,12 @@ node scripts/verify-contract.mjs  # 全部通过：244 项装配形状断言
 - **两份 `formatTokens` 必须逐值一致。** 出于同样的原因这份重复无法避免。脚本从
   `__internals` 取出浏览器半那份，与 `lib/fold.js` 逐值比对 16 个取值加上
   `-1` / `NaN` / `Infinity` 三个边界。把任一侧的阈值改掉都会让它失败，所以这不是走过场。
+- **数据形状必须挺过两半之间的那一跳。** 宿主折叠 → 写入 `internal.summary` → settings 服务
+  投影 → 浏览器读回。任何一处嵌套层级、字段名或大小写不一致，界面上都只表现为"没有数据"，
+  而不会报错。脚本用**宿主真实的 store** 写一次（捕获它实际提交的完整 raw config），
+  把那份 config 按 `settings.describe()` 的返回形状包起来，交给浏览器半真实的
+  `readSummary` / `normaliseRows` 读回，逐行比对两端——并附一条负向对照：把 `summary`
+  放上一层，浏览器半必须什么都读不到。
 - **持久化必须按失败回退，而不是按可用性二选一。** `mode` 只决定"优先用谁"；
   `persist()` 两条通道都试，只有两条都抛错才算失败。脚本用桩做了行为验证 ——
   `configEditor` 抛错时仍会经 `settings` 写成功，两条都死则如实返回 `false`。

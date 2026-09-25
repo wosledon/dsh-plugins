@@ -148,18 +148,49 @@ export function createStore(ctx, rawConfig, identity) {
     }
   }
 
-  /** `configEditor` 路径：按 Loader 条目寻址，回写完整 raw config。 */
+  /**
+   * 找到本插件的 Loader 条目。
+   *
+   * 两个来源都试：`configuration()` 直接给出 `{ entry, inherited, override }`，
+   * 但它只保证覆盖"active entries"；`entries()` 返回裸 `Entry[]`，更原始也更稳。
+   * 只依赖其中一个，一旦对方的收录口径与我假设的不同，就会静默找不到条目、
+   * 进而整条通道失效。
+   */
+  function locateEntry() {
+    if (typeof editor.configuration === 'function') {
+      const row = findEntry(editor.configuration(), identity);
+      if (row !== undefined && isObject(row.entry)) return row.entry;
+    }
+    if (typeof editor.entries === 'function') {
+      const list = editor.entries();
+      if (Array.isArray(list)) {
+        for (const candidate of list) {
+          const id = patchIdOf(candidate);
+          const name = isObject(candidate?.options) ? candidate.options.name : candidate?.name;
+          if (id === identity.ns || name === identity.packageName) return candidate;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * `configEditor` 路径：按 Loader 条目寻址，回写完整 raw config。
+   *
+   * 回写值取自 `edit` 的 `change(current, inherited)` 回调参数，而不是自己去读
+   * `configuration()` —— 那正是 `edit` 的设计用法，也顺带避开了"读到的层"与
+   * "写回的层"不一致的窗口（`edit` 内部会检测写入期间的条目替换）。
+   */
   async function persistViaEditor() {
-    const row = findEntry(editor.configuration(), identity);
-    if (row === undefined) throw new Error(`configEditor 里找不到条目 ${identity.ns}`);
-    entry = row.entry;
-    const next = {
-      ...(isObject(row.inherited) ? row.inherited : {}),
-      ...(isObject(row.override) ? row.override : {}),
+    const found = locateEntry();
+    if (found === null) throw new Error(`configEditor 里找不到条目 ${identity.ns}`);
+    entry = found;
+    await editor.edit(entry, (current, inherited) => ({
+      ...(isObject(inherited) ? inherited : {}),
+      ...(isObject(current) ? current : {}),
       scanLimit,
       internal: plainClone(internal),
-    };
-    await editor.edit(entry, () => next);
+    }));
   }
 
   /** `settings` 路径：按命名空间 + 路径增量写。 */
