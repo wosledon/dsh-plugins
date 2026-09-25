@@ -13,6 +13,7 @@ import { createStore } from './lib/store.js';
 import { tokenByModelUnit } from './lib/projection.js';
 import { buildSummary, probeSessionSource } from './lib/summary.js';
 import { CONFIG_NS, DEFAULT_SCAN_LIMIT, SUMMARY_SHAPE, SUMMARY_TTL_MS } from './lib/constants.js';
+import { traceLine } from './lib/tracefile.js';
 
 export { Config };
 
@@ -73,11 +74,18 @@ export function apply(ctx, rawConfig) {
    */
   void store.setLastBoot({ phase: 'enter' }).catch(() => {});
   /*
-   * 里程碑埋点。真机排查已经花了四轮重启，每轮只能回答一个是/否问题；这一条让
-   * **一次**启动就把范围缩到一个点。`trace` 只保留最后到达的那一步，所以看到
-   * `timer:created` 却看不到 `timer:tick:1`，就等于"定时器建了但没触发"。
+   * 里程碑埋点，**写两份**：
+   *   1. `config.internal.trace`（给界面/诊断看）
+   *   2. 同步追加到 `~/.dsh/token-usage-trace.log`（给排查看）
+   *
+   * 为什么必须写第二份：前几轮的诊断都只写第 1 份，而真机上**失败恰恰就在那条
+   * 配置写入通道**里——`trace` 永远停在 `startup:refreshed`，连绕过队列的诊断写入
+   * 也不落盘。于是形成了自指困局：**用坏掉的机制观测这个机制坏在哪**。
+   * 文件那份用 `appendFileSync`，不经过 Cordis / configEditor / settings，
+   * 所以它能记录下"配置写入卡在哪一步"之外的事实。
    */
   const trace = (text) => {
+    traceLine(text);
     void store.setTrace(text).catch(() => {});
   };
   trace('apply:enter');
@@ -125,8 +133,10 @@ export function apply(ctx, rawConfig) {
 
   /** 扫描一次并把结果落盘。并发保护：扫描是重活，不能叠加。 */
   async function runScan(reason) {
+    traceLine(`scan:enter(${reason}) scanning=${scanning}`);
     if (scanning) return false;
     const probe = probeSessionSource(ctx);
+    traceLine(`scan:probe available=${probe.available} kind=${probe.kind ?? ''} reason=${probe.reason ?? ''}`);
     if (!probe.available) {
       // 失败也要落盘：否则界面只会显示"没有数据"，用户无从判断是没用量还是插件坏了。
       await store.setLastSweep({ ok: false, detail: probe.reason });
@@ -144,8 +154,11 @@ export function apply(ctx, rawConfig) {
        */
       await store.setLastSweep({ ok: false, detail: '扫描中…' });
       const limit = Number.isFinite(store.getScanLimit()) ? store.getScanLimit() : scanLimit;
+      traceLine(`scan:build-begin limit=${limit}`);
       const summary = await buildSummary(probe, { limit });
+      traceLine(`scan:built rows=${summary?.rows?.length} timeline=${summary?.timeline?.length} scanned=${summary?.scanned}`);
       const wrote = await store.setSummary(summary);
+      traceLine(`scan:write-result wrote=${wrote}`);
       await store.setLastSweep({
         ok: wrote === true,
         detail: wrote === true ? '' : '汇总写入设置失败',
@@ -154,6 +167,7 @@ export function apply(ctx, rawConfig) {
       return true;
     } catch (error) {
       const detail = message(error);
+      traceLine(`scan:failed ${detail}`);
       await store.setLastSweep({ ok: false, detail });
       warn(ctx, `扫描失败（${reason}）：${detail}`);
       return false;
