@@ -20,6 +20,7 @@
  * 这正是插件持久化自身配置的正规通道，也不需要自己发明 patch 层寻址。
  * `settings.mutate` 作为后备保留：某些 profile 可能只挂载了其中一方。
  */
+import { traceLine } from './tracefile.js';
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -238,14 +239,24 @@ export function createStore(ctx, rawConfig, identity) {
       ? [['editor', persistViaEditor], ['settings', canMutate ? persistViaSettings : null]]
       : [['settings', persistViaSettings], ['editor', canEdit ? persistViaEditor : null]];
     let lastError = null;
+    /*
+     * 每个通道的失败都记进文件日志。
+     *
+     * 真机事实：扫描是好的（`scan:built rows=3 timeline=2`），失败在
+     * `scan:write-result wrote=false`，而且**100ms 内返回**——不是超时，是两个通道
+     * 都立刻抛错。要修它就必须知道抛的是什么；只记"失败了"会再浪费一轮重启。
+     */
+    traceLine(`persist:begin mode=${mode} channels=${attempts.filter(([, a]) => a !== null).map(([c]) => c).join(',')}`);
     for (const [channel, attempt] of attempts) {
       if (attempt === null) continue;
       try {
         await withWriteTimeout(attempt(), channel);
         if (lastChannel !== channel) lastChannel = channel;
+        traceLine(`persist:ok channel=${channel}`);
         return true;
       } catch (error) {
         lastError = `${channel}: ${message(error)}`;
+        traceLine(`persist:fail channel=${channel} error=${message(error)}`);
       }
     }
     warn(`写入配置失败（两条通道都试过）：${lastError ?? '无可用通道'}`);
