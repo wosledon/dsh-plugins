@@ -888,12 +888,26 @@ check(
     && /\.stu-heatLabelCell\{[^}]*height:11px/.test(cssBlock),
   '规则：' + (rules.get('.stu-heatLabelCell') ?? '(找不到)'),
 );
+/*
+ * 月份归属按**日历**，不按用量。
+ *
+ * 这条断言钉的是被真机推翻两次的规则：
+ *   1. 最初取"第一个非 null 格子"，而窗口起点之前那几天当时也被补成 0 值格子，
+ *      于是 6 月的图顶着「5月」。
+ *   2. 改成"第一个 `total > 0` 的格子"后**更糟**：一年窗口里只有一个月含用量，
+ *      其余 11 个月的列全是 0，全都拿不到月份——真机截图里整整一年只显示了一个
+ *      「9月」。
+ * 月份属于"这一列覆盖哪些日期"，与有没有用过毫无关系。所以这里钉的是
+ * `cell !== null`（= 落在窗口内），而**不是** `total > 0`。
+ */
 check(
-  '顶部月份标签只在新月份的第一列出现，且按"第一个有用量的格子"归属（不被首列补 0 带偏）',
+  '顶部月份标签只在新月份的第一列出现，且按**日历日期**归属（不是按用量）',
   /const monthOf = \(week\) => \{/.test(source)
-    && /cell !== null && cell\.total > 0/.test(source)
+    && /cell !== null && cell !== undefined/.test(source)
+    && !/cell\.total > 0/.test(source)
     && /month !== null && month !== previous \? String\(month\) \+ '月' : ''/.test(source)
     && /className:\s*'stu-heatMonth'/.test(source),
+  '按用量归属会让没有用量的月份全部失标',
 );
 check(
   '热力图有图例（少 → 多，五档色块），否则深浅只是装饰',
@@ -1711,11 +1725,18 @@ if (renderDonutFn !== null && renderHeatmapFn !== null) {
       + ' 算应为 ' + windowGridCells(expectedRange) + ' + 5',
   );
   check(
-    '顶部月份标签只在新月份的第一列出现（其余列是空标签）',
+    '顶部月份标签覆盖窗口里每一个月份（不是只标有用量的那个月）',
     (() => {
       const labels = findByClass(heatTree, /stu-heatMonth/, [])
         .map((node) => (node.children ?? []).filter((child) => typeof child === 'string').join(''));
-      return labels.filter((label) => label !== '').length === 1 && labels.includes('6月');
+      /*
+       * 一年窗口必须至少出现 12 个非空月份标签。
+       *
+       * 原断言写的是 `length === 1 && labels.includes('6月')`——那条钉的是
+       * "只有有用量的那个月才有标签"这个**已被真机推翻**的旧规则，真机截图里
+       * 整整一年只显示了一个「9月」。改成钉"覆盖每个月份"，正是用户报的缺陷。
+       */
+      return labels.filter((label) => label !== '').length >= 12;
     })(),
     JSON.stringify(findByClass(heatTree, /stu-heatMonth/, [])
       .map((node) => (node.children ?? []).filter((child) => typeof child === 'string').join(''))),
