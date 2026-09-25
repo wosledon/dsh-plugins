@@ -946,7 +946,7 @@ if (donutSegmentsFn !== null) {
     donutSegmentsFn([{ key: 'a', total: 1 }, { key: 'b', total: 1 }], 2)
       .map((segment) => segment.opacity).join(',') === '1,0.74'
       && donutSegmentsFn(
-        Array.from({ length: 5 }, (unused, index) => ({ key: String(index), total: 1 })), 5,
+        Array.from({ length: 5 }, (unusedValue, index) => ({ key: String(index), total: 1 })), 5,
       ).map((segment) => segment.opacity).join(',') === '1,0.74,0.46,0.24,1',
   );
 
@@ -1023,8 +1023,7 @@ if (renderDonutFn !== null && renderTrendFn !== null) {
       return single.length === 1 && String(single[0].props.strokeDasharray).startsWith('100 ');
     })());
   check('总量为 0 时不渲染环形图（空圆环看起来像加载失败）',
-    renderDonutFn([{ key: 'a', provider: 'p', model: 'm', total: 0 }], tFor) === null
-      || !hasClass(renderDonutFn([{ key: 'a', provider: 'p', model: 'm', total: 0 }], tFor), /stu-donutSeg/));
+    !hasClass(renderDonutFn([{ key: 'a', provider: 'p', model: 'm', total: 0 }], tFor), /stu-donutSeg/));
 
   const manyPoints = [
     { day: '2026-06-01', total: 10 },
