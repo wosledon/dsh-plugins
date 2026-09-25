@@ -69,6 +69,7 @@ window.__ModuleLoader__.load({
       bOut: '输出',
       bCacheRead: '缓存读',
       bCacheWrite: '缓存写',
+      chartAria: '{model}（{provider}）合计 {total} token',
       loading: '载入中…',
       close: '关闭',
     };
@@ -106,6 +107,7 @@ window.__ModuleLoader__.load({
       bOut: 'Out',
       bCacheRead: 'Cache R',
       bCacheWrite: 'Cache W',
+      chartAria: '{model} ({provider}), {total} tokens total',
       loading: 'Loading…',
       close: 'Close',
     };
@@ -137,6 +139,34 @@ window.__ModuleLoader__.load({
       '.stu-foot{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);display:flex;flex-direction:column;gap:4px}',
       '.stu-empty{padding:28px 0;text-align:center;font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary)}',
       '.stu-error{padding:10px 12px;border:.5px solid var(--dsw-alias-state-error-primary);border-radius:8px;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px}',
+      /* ---- 图表：横向堆叠条 ---------------------------------------- */
+      /*
+       * 四段只用同一个品牌色的不同透明度，而不是四个不同语义色。
+       * 理由：主题令牌里没有"分类色板"，硬借 state-* 会把"缓存读"染成警告色
+       * 这类误读。用同色深浅 + 段内直接标数值，颜色只负责分组，读数不依赖颜色，
+       * 浅色/深色主题下都不会失效。
+       */
+      '.stu-chart{display:flex;flex-direction:column;gap:12px;padding:14px;border:.5px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}',
+      '.stu-chartRow{display:flex;flex-direction:column;gap:5px;min-width:0}',
+      '.stu-chartHead{display:flex;align-items:baseline;justify-content:space-between;gap:10px;min-width:0}',
+      '.stu-chartName{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.stu-chartProvider{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.stu-chartTotal{font-size:12px;line-height:18px;font-weight:500;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums;white-space:nowrap}',
+      /* 轨道高度固定，条形按占比填满；min-width 保证极小段也看得见 */
+      '.stu-chartTrack{display:flex;width:100%;height:14px;border-radius:3px;overflow:hidden;background:var(--dsw-alias-bg-layer-2)}',
+      '.stu-seg{height:100%;min-width:2px}',
+      '.stu-seg[data-bucket="uncachedInputTokens"]{background:var(--dsw-alias-brand-primary)}',
+      '.stu-seg[data-bucket="outputTokens"]{background:var(--dsw-alias-brand-primary);opacity:.74}',
+      '.stu-seg[data-bucket="cacheReadTokens"]{background:var(--dsw-alias-brand-primary);opacity:.46}',
+      '.stu-seg[data-bucket="cacheWriteTokens"]{background:var(--dsw-alias-brand-primary);opacity:.24}',
+      '.stu-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}',
+      '.stu-legendItem{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}',
+      '.stu-swatch{width:9px;height:9px;border-radius:2px;flex:none}',
+      '.stu-swatch[data-bucket="uncachedInputTokens"]{background:var(--dsw-alias-brand-primary)}',
+      '.stu-swatch[data-bucket="outputTokens"]{background:var(--dsw-alias-brand-primary);opacity:.74}',
+      '.stu-swatch[data-bucket="cacheReadTokens"]{background:var(--dsw-alias-brand-primary);opacity:.46}',
+      '.stu-swatch[data-bucket="cacheWriteTokens"]{background:var(--dsw-alias-brand-primary);opacity:.24}',
+      '.stu-legendValue{color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}',
       '.stu-notice{padding:8px 12px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
       '.stu-bar{height:4px;border-radius:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden;margin-top:6px}',
       '.stu-barFill{height:100%;background:var(--dsw-alias-brand-primary)}',
@@ -251,6 +281,74 @@ window.__ModuleLoader__.load({
       const value = isObject(entry.value) ? entry.value : undefined;
       const summary = (user?.internal?.summary) ?? (value?.internal?.summary) ?? null;
       return { summary: isObject(summary) ? summary : null, persistent: true };
+    }
+
+    /** 四桶的展示顺序与文案键。 */
+    const CHART_BUCKETS = [
+      ['uncachedInputTokens', 'bIn'],
+      ['outputTokens', 'bOut'],
+      ['cacheReadTokens', 'bCacheRead'],
+      ['cacheWriteTokens', 'bCacheWrite'],
+    ];
+
+    /**
+     * 横向堆叠条形图：每个模型一条，四段 = 四个桶。
+     *
+     * 为什么不画饼图：这里 cacheRead 常占九成以上，饼图会把其余三段压成看不清的
+     * 细线。堆叠条同时回答两个问题——
+     *   - **谁大**：条长按「该模型总量 / 最大总量」归一，跨模型直接比长短；
+     *   - **构成**：段宽按「该桶 / 该模型总量」分配，看的是内部比例。
+     * 两者分开算，所以大模型的内部构成和小模型的一样可读。
+     *
+     * 数值在每段图例里直接给出：颜色只负责分组，读数不依赖颜色，
+     * 浅色/深色主题下都不会失真。
+     */
+    function renderChart(rows, t) {
+      if (!Array.isArray(rows) || rows.length === 0) return null;
+      const max = rows.reduce((peak, row) => Math.max(peak, Number.isFinite(row.total) ? row.total : 0), 0);
+      return h('div', { className: 'stu-chart', key: 'chart' },
+        rows.map((row) => {
+          const total = Number.isFinite(row.total) ? row.total : 0;
+          const segments = CHART_BUCKETS
+            .map(([bucket, labelKey]) => ({
+              bucket,
+              labelKey,
+              value: Number.isFinite(row.buckets?.[bucket]) ? row.buckets[bucket] : 0,
+            }))
+            .filter((segment) => segment.value > 0);
+          const label = fill(t('chartAria'), {
+            model: row.model === 'unknown' ? t('unattributed') : row.model,
+            provider: row.provider,
+            total: formatExact(total),
+          });
+          return h('div', { className: 'stu-chartRow', key: row.key },
+            h('div', { className: 'stu-chartHead' },
+              h('span', { className: 'stu-chartName', title: row.model + ' · ' + row.provider },
+                row.model === 'unknown' ? t('unattributed') : row.model,
+                ' ',
+                h('span', { className: 'stu-chartProvider' }, row.provider)),
+              h('span', { className: 'stu-chartTotal' }, formatExact(total))),
+            h('div', {
+              className: 'stu-chartTrack',
+              role: 'img',
+              'aria-label': label,
+              title: label,
+            },
+              segments.map((segment) => h('div', {
+                key: segment.bucket,
+                className: 'stu-seg',
+                'data-bucket': segment.bucket,
+                // 段宽 = 该桶 / 全局最大总量。和起来就是 total/max —— 条长比大小、
+                // 段宽看构成，一次归一同时满足两者。
+                style: { width: (max > 0 ? (segment.value / max) * 100 : 0) + '%' },
+              }))),
+            h('div', { className: 'stu-legend' },
+              segments.map((segment) => h('span', { className: 'stu-legendItem', key: segment.bucket },
+                h('i', { className: 'stu-swatch', 'data-bucket': segment.bucket }),
+                t(segment.labelKey),
+                ' ',
+                h('b', { className: 'stu-legendValue' }, formatExact(segment.value))))));
+        }));
     }
 
     /** 把汇总的 rows 归一成界面用的行（容错，坏数据不炸渲染）。 */
@@ -376,6 +474,9 @@ window.__ModuleLoader__.load({
       } else if (rows.length === 0) {
         body.push(h('div', { className: 'stu-empty', key: 'empty' }, t('emptyAll')));
       } else {
+        // 图表放在表格之上：先给"谁大 / 构成如何"的直觉，再给精确读数。
+        // 图表用**全部行**而不是当前页——它是总览，翻页不该改变它。
+        body.push(renderChart(rows, t));
         const head = h('thead', { key: 'thead' }, h('tr', null,
           h('th', { className: 'stu-nameCol' }, t('colModel')),
           h('th', { className: 'stu-num' }, t('colInput')),

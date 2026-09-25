@@ -508,6 +508,48 @@ check(
   /\.stu-popBuckets\{[^}]*grid-template-columns:repeat\(2,/.test(cssBlock),
 );
 
+/*
+ * 图表（列表不直观，所以加了横向堆叠条）。
+ *
+ * 与浮层四桶同属"数据到了但界面没表达"的高危区：图画错不会报错，只会让人读错。
+ * 所以几条关键的归一化语义都钉死。
+ */
+check('页面渲染了图表容器 stu-chart', /className:\s*'stu-chart'/.test(source));
+check(
+  '图表按四桶分段，每段带 data-bucket（样式与断言都靠它定位）',
+  /'data-bucket':\s*segment\.bucket/.test(source) && /className:\s*'stu-seg'/.test(source),
+);
+check(
+  '条长按全局最大总量归一（段宽 = value / max，不是 value / total）',
+  /\(segment\.value \/ max\) \* 100/.test(source),
+  '若写成 / total 则所有条等长，跨模型比不出大小',
+);
+check(
+  '图表用全部行而不是当前页（总览不该被翻页改变）',
+  /body\.push\(renderChart\(rows, t\)\)/.test(source) && !/renderChart\(slice/.test(source),
+);
+check(
+  '值为 0 的桶不画段（否则 min-width 会留下看不见却占位的碎片）',
+  /filter\(\(segment\) => segment\.value > 0\)/.test(source),
+);
+check('每段都直接标出数值（读数不依赖颜色深浅）', /formatExact\(segment\.value\)/.test(source));
+check('有图例与色块', /className:\s*'stu-legend'/.test(source) && /className:\s*'stu-swatch'/.test(source));
+check(
+  '条形有 role=img 与 aria-label（无障碍，不只是一堆 div）',
+  /role:\s*'img'/.test(source) && /'aria-label':\s*label/.test(source),
+);
+check(
+  '四段只用品牌色的不同透明度，未硬借 state-* 语义色',
+  // 6 处 = .stu-seg 与 .stu-swatch 各三档透明度，加上不打 opacity 的第一档。
+  /data-bucket="uncachedInputTokens"\]\{background:var\(--dsw-alias-brand-primary\)\}/.test(cssBlock)
+    && (cssBlock.match(/--dsw-alias-brand-primary\);opacity:/g) ?? []).length === 6,
+  '实际 ' + (cssBlock.match(/--dsw-alias-brand-primary\);opacity:/g) ?? []).length,
+);
+check(
+  '四段透明度依次递减（保证相邻段可分辨）',
+  /opacity:\.74/.test(cssBlock) && /opacity:\.46/.test(cssBlock) && /opacity:\.24/.test(cssBlock),
+);
+
 /* ---------------- 7. 席位注册 ---------------- */
 console.log('');
 console.log('[7. 席位注册]');
