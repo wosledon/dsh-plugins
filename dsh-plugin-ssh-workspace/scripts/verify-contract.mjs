@@ -304,20 +304,28 @@ realCheck('宿主半不注册 slot（那是客户端半的事）', !/ctx\.slots/
 realCheck('宿主半不建定时器（本插件没有后台轮询）', !/setInterval/.test(hostCode));
 
 /*
- * 取服务必须走 `ctx.get()`，不能写 `ctx.tools` 这类**属性访问**。
+ * `tools` **必须**进 inject。
  *
- * Cordis 规则：访问服务属性必须先在 `inject` 里声明该服务，否则抛
- * `cannot get property "tools" without inject`。这条错误在 apply 期间抛出，
- * 后果是**整行激活失败**——真机实测诊断只有一行 `1 entry did not activate`，
- * 界面上完全看不出是插件的问题，极难定位。
+ * 这条断言原先写反了：我当时以为可以用 `ctx.get('tools')` 绕过 inject 声明，
+ * 于是断言"宿主 inject 只声明 settings"。错的。Cordis 的 `ctx.get(name)` 是
+ * **安全探测**——没声明该服务时它返回 undefined 而**不抛错**，所以"绕过"的真实
+ * 后果是工具一个都没注册，而 `lastBoot` 里只留下一句看起来正常的 `tools=true`
+ * （那只是配置开关的值，不是注册结果）。
+ *
+ * 一个写反的断言比没有断言更坏：它会主动把正确的改法判为违规。
  */
-realCheck('取 tools 服务用 ctx.get 而不是 ctx.tools（属性访问要求 inject 声明）',
-  /ctx\.get\('tools'\)/.test(hostCode) && !/ctx\.tools/.test(hostCode), '出现 ctx.tools 属性访问');
+realCheck('宿主 inject 声明了 tools（ctx.get 未声明时返回 undefined 而不报错）',
+  /export const inject = \['settings', 'tools'\]/.test(hostCode), '宿主 inject 形状不对');
+realCheck('宿主 inject 声明了 settings', /export const inject = \[[^\]]*'settings'/.test(hostCode));
+realCheck('工具注册在 ctx.effect 里（由 fiber 拥有清理，与 scheduled-tasks 一致）',
+  /ctx\.effect\(\(\) => \{[\s\S]*?\}, `\$\{PACKAGE_NAME\}: tools`\)/.test(hostCode)
+    && /toolsService\.register\(/.test(hostCode), '注册没有放进 ctx.effect');
+realCheck('自述写的是真实注册条数，不是配置开关的值',
+  /detail:\s*`tools=\$\{registeredTools\}/.test(hostCode), '把配置值当结果上报了');
+realCheck('优先解析宿主 defineTool（它带参数校验），拿不到才退化',
+  /await import\('@deepseek-ai\/dsh-tools'\)/.test(hostCode) && /defineTool/.test(hostCode));
 realCheck('取 configEditor / settings 也走 ctx.get',
   /ctx\.get\('configEditor'\)/.test(fs.readFileSync(path.join(root, 'lib/store.js'), 'utf8')));
-realCheck('宿主 inject 只声明 settings（tools 用查询语义，缺失时不该让整行不激活）',
-  /export const inject = \['settings'\]/.test(hostCode), '宿主 inject 形状变了');
-
 /*
  * 启动自述必须在**注册工具之前**写。
  *

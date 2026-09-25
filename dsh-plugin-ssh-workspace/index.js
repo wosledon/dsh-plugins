@@ -63,35 +63,88 @@ export function apply(ctx, rawConfig) {
   /* ---------------- 工具 ---------------- */
 
   /*
-   * 用 `ctx.get('tools')` 而**不是** `ctx.tools`。
+   * 工具注册。三段都是踩出来的：
    *
-   * Cordis 规则：访问服务**属性**必须先在自己的 `inject` 里声明该服务，否则抛
-   * `cannot get property "tools" without inject`。而这条错误发生在 apply 期间，
-   * 后果是**整行激活失败**（真机实测：`1 entry did not activate`）——正是
-   * "应用起不来"那条路，且诊断里只留一行，界面上看不出是插件的问题。
+   * 1. **`tools` 必须进 `inject`**（见文件底部 `export const inject`）。
+   *    Cordis 里 `ctx.get(name)` 是**安全探测**：没有 inject 声明时它返回
+   *    `undefined` 而**不抛错**。所以早先写的 `ctx.get('tools')` 一路静默返回
+   *    undefined，工具一个都没注册，而 `lastBoot` 里只留下一句
+   *    `tools=true`（那只是配置开关的值，不是注册结果）——界面和诊断都看不出
+   *    问题。现在 `detail` 写的是**真实注册条数**。
    *
-   * `ctx.get()` 是查询语义，不需要预先声明，因此也能优雅处理"这个 profile 没有
-   * tools 服务"的情况：插件其余部分照常工作，而不是整个不激活。
+   * 2. **注册放在 `ctx.effect` 里**，由 fiber 拥有清理，与已真机验证的
+   *    scheduled-tasks 一致。
+   *
+   * 3. **优先用宿主真正的 `defineTool`**（动态 import `@deepseek-ai/dsh-tools`，
+   *    本插件没有构建步骤、不能静态 import 宿主包）。它不只转 schema，还提供
+   *    execute 前的参数校验；拿不到时退化为直接注册原始 spec，工具仍可用。
    */
-  const tools = typeof ctx.get === 'function' ? ctx.get('tools') : undefined;
-  if (store.getConfig().enableTools !== false && tools !== undefined && typeof tools.register === 'function') {
+  const toolsService = (() => {
     try {
-      const api = {
-        getConfig: () => store.getConfig(),
-        pushHistory: (record) => store.pushHistory(record),
-      };
-      for (const spec of buildTools(api)) {
-        try {
-          const off = tools.register(spec);
-          if (typeof off === 'function') cleanups.push(off);
-        } catch (error) {
-          // 单个工具注册失败不该让其余工具也没了。
-          ctx.emit?.('plugin/error', { plugin: PLUGIN_ID, message: `注册工具 ${spec.name} 失败：${messageOf(error)}` });
-        }
-      }
-    } catch (error) {
-      ctx.emit?.('plugin/error', { plugin: PLUGIN_ID, message: `构建工具集失败：${messageOf(error)}` });
+      return typeof ctx.get === 'function' ? ctx.get('tools') : undefined;
+    } catch {
+      return undefined;
     }
+  })();
+
+  let registeredTools = 0;
+  let toolsNote = '';
+
+  if (store.getConfig().enableTools === false) {
+    toolsNote = 'enableTools=false';
+  } else if (toolsService === undefined || typeof toolsService.register !== 'function') {
+    toolsNote = 'tools 服务不可用';
+  } else {
+    ctx.effect(() => {
+      let disposed = false;
+      const disposers = [];
+      void (async () => {
+        try {
+          let defineTool = null;
+          try {
+            const hostTools = await import('@deepseek-ai/dsh-tools');
+            if (typeof hostTools.defineTool === 'function') defineTool = hostTools.defineTool;
+          } catch {
+            /* 拿不到就用原始 spec */
+          }
+          const api = {
+            getConfig: () => store.getConfig(),
+            pushHistory: (record) => store.pushHistory(record),
+          };
+          for (const spec of buildTools(api)) {
+            let definition = spec;
+            if (defineTool !== null) {
+              try {
+                definition = defineTool(spec);
+              } catch (error) {
+                toolsNote = `defineTool(${spec.name}) 失败：${messageOf(error)}`;
+                continue;
+              }
+            }
+            try {
+              const off = toolsService.register(definition);
+              if (typeof off === 'function') disposers.push(off);
+              registeredTools += 1;
+            } catch (error) {
+              // 单个工具注册失败不该让其余工具也没了。
+              toolsNote = `注册 ${spec.name} 失败：${messageOf(error)}`;
+            }
+          }
+          // 注册结果写进自述：下一次启动就能看出到底成了几个。
+          void store.setLastBoot({ phase: 'ready', detail: `tools=${registeredTools}${toolsNote === '' ? '' : ' ' + toolsNote}` });
+        } catch (error) {
+          toolsNote = messageOf(error);
+        }
+      })();
+      return () => {
+        if (disposed) return;
+        disposed = true;
+        for (let index = disposers.length - 1; index >= 0; index -= 1) {
+          try { disposers[index](); } catch { /* 单个清理失败不该阻塞其余 */ }
+        }
+        disposers.length = 0;
+      };
+    }, `${PACKAGE_NAME}: tools`);
   }
 
   /* ---------------- 客户端可用的纯函数 ---------------- */
@@ -125,8 +178,15 @@ export function apply(ctx, rawConfig) {
     };
   }
 
-  /* ---------------- 装配收尾 ---------------- */
-
+  /*
+   * 装配收尾。
+   *
+   * 这里**不再**写第二条 `ready`：`ready` 现在由工具注册那段在拿到**真实注册
+   * 条数**之后写。早先这里的写的是 `tools=${enableTools !== false}`——那只是配置
+   * 开关的值，于是"开关是开的、但一个工具都没注册成功"在诊断里显示成
+   * `tools=true`，看起来完全正常。把配置值当成结果上报，正是这类问题最难查的
+   * 原因。
+   */
   ctx.effect(() => async () => {
     for (let index = cleanups.length - 1; index >= 0; index -= 1) {
       try {
@@ -138,17 +198,19 @@ export function apply(ctx, rawConfig) {
     cleanups.length = 0;
   }, `${PACKAGE_NAME}: teardown`);
 
-  try {
-    void store.setLastBoot({
-      phase: 'ready',
-      detail: `tools=${store.getConfig().enableTools !== false}`,
-    });
-  } catch {
-    /* 自述失败不影响功能 */
-  }
-
   return undefined;
 }
 
 export { Config };
-export const inject = ['settings'];
+
+/*
+ * `tools` 必须在这里声明。
+ *
+ * Cordis 的 `ctx.get(name)` 是**安全探测**：没在 `inject` 里声明该服务时它返回
+ * `undefined` 而**不抛错**。所以"用 ctx.get 绕过 inject"这个想法是错的——它不会
+ * 报错，只会让你的服务查询一直拿到 undefined（真机实测：工具一个都没注册，
+ * 而 `lastBoot` 里只留一句看起来正常的 `tools=true`）。
+ *
+ * 与已真机验证的 scheduled-tasks 一致（`inject = ['settings', 'tools']`）。
+ */
+export const inject = ['settings', 'tools'];
