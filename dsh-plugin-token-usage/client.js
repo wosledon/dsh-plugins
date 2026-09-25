@@ -77,8 +77,9 @@ window.__ModuleLoader__.load({
       segmentAria: '{model}：{share}% 合计 {total} token',
       donutCenter: '合计',
       trendEmpty: '这段时间没有用量。',
-      dayRange: '{from} 至 {to}',
       pointAria: '{day}：{total} token',
+      heatLess: '少',
+      heatMore: '多',
       loading: '载入中…',
       close: '关闭',
     };
@@ -124,8 +125,9 @@ window.__ModuleLoader__.load({
       segmentAria: '{model}: {share}%, {total} tokens',
       donutCenter: 'Total',
       trendEmpty: 'No usage recorded in this period.',
-      dayRange: '{from} – {to}',
       pointAria: '{day}: {total} tokens',
+      heatLess: 'Less',
+      heatMore: 'More',
       loading: 'Loading…',
       close: 'Close',
     };
@@ -260,21 +262,67 @@ window.__ModuleLoader__.load({
       '.stu-donutName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.stu-donutShare{color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;white-space:nowrap}',
       '.stu-donutValue{color:var(--dsw-alias-label-primary);font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap}',
-      /* ---- 图表：折线图（按天趋势） -------------------------------- */
+      /* ---- 图表：按天热力图（GitHub 贡献图那种） -------------------- */
       /*
-       * SVG 用固定坐标系 0 0 100 30 + preserveAspectRatio="none"：靠 CSS 拉伸自适应宽度，
-       * 不需要量 DOM（量 DOM 要么上 ResizeObserver，要么首帧画错再重画，两者都更脆）。
-       * 代价是 stroke-width 会被非等比缩放，所以线宽必须用 non-scaling-stroke 抵消。
-       * 高度给足 120px 让 100 单位的 viewBox 在纵向几乎不被压缩——否则线会被压扁成糊。
+       * 为什么网格用 CSS grid 而不是 SVG：热力图的格子必须是**正方形**。
+       * SVG 要自适应宽度就得给 preserveAspectRatio="none"，那会把 `rect` 连同任何
+       * 圆角一起非等比拉伸；上一版折线图的圆点就是被压成横向椭圆才挪出 SVG 的。
+       * 固定 px 的 div + CSS grid 没有这个问题，而且格子的 title 是原生 tooltip。
+       *
+       * 列 = 周、行 = 星期（0=周日）。列宽写死 14px（11px 格子 + 3px 间距），
+       * 于是 53 列 = 742px，能塞进 980px 的限宽；再宽就由外层横向滚动，**不压缩格子**
+       * ——格子一旦被压缩，深浅与面积就对不上，图会撒谎。
        */
-      '.stu-trendSvg{display:block;width:100%;height:120px;overflow:visible}',
-      /* 折线不填充（没有可比对的基准，填充面积只会让人误读成"累积量"）。 */
-      '.stu-trendLine{fill:none;stroke:#4D6BFE;stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}',
-      /* 基线用 border-l1：它是刻度不是数据，不能和数据同色。 */
-      '.stu-trendBase{stroke:var(--dsw-alias-border-l1);stroke-width:1;vector-effect:non-scaling-stroke}',
-      '.stu-trendDot{fill:#4D6BFE}',
-      '.stu-trendAxis{display:flex;justify-content:space-between;gap:12px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}',
-      '.stu-trendEmpty{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
+      '.stu-heatScroll{display:flex;align-items:flex-start;width:100%;overflow-x:auto;overflow-y:hidden}',
+      /*
+       * 左侧星期标签**吸附**在滚动容器左边（sticky 而不是独立一列）：
+       * 独立一列要么跟着滚动（横滚后看不见），要么与右侧的列宽各自为政，
+       * 上下两处一旦对不齐，读者会把格子数错一行。
+       */
+      '.stu-heatLabels{position:sticky;left:0;z-index:1;flex:none;width:26px;display:flex;flex-direction:column;gap:3px;background:var(--dsw-alias-bg-layer-1)}',
+      /* 占位块的高度必须等于月份带（16px），否则星期一那一行的标签会整体错位一格。 */
+      '.stu-heatLabelSpacer{height:16px;flex:none}',
+      '.stu-heatLabelCell{height:11px;flex:none;font-size:9px;line-height:11px;color:var(--dsw-alias-label-secondary)}',
+      '.stu-heatInner{display:flex;flex-direction:column;gap:3px}',
+      /*
+       * 月份带：与网格**共用同一套列轨道**，格子里的月份文字允许溢出到相邻轨道
+       * （overflow:visible 是 grid item 的默认值），这样"月份"标在该月第一列的正上方，
+       * 而不会把后面的列推歪。只在新月份的第一列出现，否则 53 列会标成一排糊。
+       */
+      '.stu-heatMonths{display:grid;grid-template-columns:repeat(var(--stu-heat-weeks),14px);gap:3px;height:16px}',
+      '.stu-heatMonth{font-size:9px;line-height:16px;white-space:nowrap;color:var(--dsw-alias-label-secondary)}',
+      '.stu-heatBody{display:grid;grid-template-columns:repeat(var(--stu-heat-weeks),14px);gap:3px}',
+      /*
+       * 格子尺寸写死在 `.stu-heatBody` 的列轨道（14px = 11px 格子 + 3px 间距）与
+       * `.stu-heatCell` 两处，必须同步：只改一处会让列轨道与格子宽度脱钩，
+       * 格子被拉伸成矩形，而图照画不误。
+       */
+      '.stu-heatCell{width:11px;height:11px;border-radius:2px;background:var(--dsw-alias-bg-layer-2)}',
+      /*
+       * level 0 = "这一天没有用量"，用底色令牌——**不是**第 5 档强度。
+       * 它写在 `.stu-heatCell` 的基础规则里，不再单独来一条 `[data-level="0"]`：
+       * 基础规则已经覆盖它，多一条只会多一处需要同步的声明。
+       *
+       * 1..4 档刻意用同一个色相的**不透明度**而不是四个色相：这里表达的是
+       * "深浅 = 多少"的**序数**关系，用分类色（四个色相）会让读者以为四档是四种
+       * 互相独立的类别，读不出大小。四个声明里只出现一个色值，白名单见
+       * verify-layout.mjs 的 CHART_COLOR_RULE。
+       *
+       * 写 `#4D6BFE38` 这种八位十六进制而不是 `rgba(77,107,254,.22)`：
+       * 白名单是**按色值**比对的，rgba 形式无法与 CHART_PALETTE 里的四个值对齐，
+       * 只能再放宽一条规则；而"收紧成白名单"正是这套断言的价值所在。
+       *
+       * 建议档位 .22 / .45 / .72 / 1：最低档在浅色与深色主题下都还看得见，
+       * 又不至于让"很少"和"没有"（level 0 的底色）混淆。
+       */
+      '.stu-heatCell[data-level="1"]{background:#4D6BFE38}',
+      '.stu-heatCell[data-level="2"]{background:#4D6BFE73}',
+      '.stu-heatCell[data-level="3"]{background:#4D6BFEB8}',
+      '.stu-heatCell[data-level="4"]{background:#4D6BFE}',
+      /* 图例：左边"少"，右边"多"，中间五档色块按深浅排开。 */
+      '.stu-heatLegend{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:10px;line-height:14px;color:var(--dsw-alias-label-secondary)}',
+      '.stu-heatLegendScale{display:inline-flex;align-items:center;gap:4px}',
+      '.stu-heatEmpty{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
       '.stu-notice{padding:8px 12px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
       '.stu-bar{height:4px;border-radius:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden;margin-top:6px}',
       '.stu-barFill{height:100%;background:var(--dsw-alias-brand-primary)}',
@@ -512,53 +560,200 @@ window.__ModuleLoader__.load({
       return pad(match[2]) + '-' + pad(match[3]);
     }
 
-    /*
-     * 折线图固定坐标系的高度；与 `viewBox` 的后一个数保持一致才有意义。
-     */
-    const TREND_HEIGHT = 30;
-    /*
-     * 折线基线（= 零刻度）在坐标系里的 y。
+    /**
+     * `YYYY-MM-DD` / `YYYY-M-D` → `Date`（**本地**零点）。
      *
-     * 不取满 30 而是留 6 个单位：坐标轴下方要放首尾日期标注，而且零值点贴着
-     * 底边时会和基线糊成一条。基线同时就是**纵轴跨度**——最大值画在 y=0（上沿），
-     * 0 画在 y=baseY，于是"轴从 0 起"在几何上表现为 y 最小是 0、最大是 baseY。
+     * 刻意不用 `new Date(day)` 或 `Date.parse(day)`：日期字符串没有时区，这两种
+     * 解析都按 **UTC** 处理再按本地时区回读，东八区会整体偏一天（周日算成周六，
+     * 整个热力图的行会错位一格）；西半球同理偏回去。偏一天不报错，只是所有格子
+     * 都画到了错误的星期几上——最难查的一类错。
      *
-     * 注意别把跨度写成 `TREND_HEIGHT - TREND_BASE_Y`（= 4）：那样最高点会落在
-     * y=22，离基线只有 4 个单位——整条折线被压成贴着基线的一根细线，
-     * 图能画出来、也不报错，只是所有起伏都看不出来（自检里有一条正是钉这个）。
+     * 解析不出年月日时返回 null，由调用方降级，而不是抛。
      */
-    const TREND_BASE_Y = 26;
+    function parseDay(day) {
+      const match = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(String(day));
+      if (match === null) return null;
+      const year = Number(match[1]);
+      const month = Number(match[2]);
+      const date = Number(match[3]);
+      if (month < 1 || month > 12 || date < 1 || date > 31) return null;
+      // `new Date(y, m-1, d)` 走本地时区，与 `getDay()` / `setDate()` 同一套语义。
+      return new Date(year, month - 1, date);
+    }
+
+    /** 本地日期加减天数；用 `setDate` 跨月跨年由宿主 Date 自己处理，不必手算。 */
+    function shiftDay(date, delta) {
+      return new Date(date.getFullYear(), date.getMonth(), date.getDate() + delta);
+    }
 
     /**
-     * 折线图的坐标（等距 X + **从 0 起**的 Y）。
+     * `Date` → `YYYY-MM-DD`（本地）。
      *
-     * Y 轴必须从 0 起，这是本节唯一"错了会静默误导"的地方：
-     * 若改成从这段数据的 `min` 起，一张每天几百 token 的平线会被画成剧烈起伏的
-     * 山峰，看图的人会以为用量暴涨过——图不报错，只是撒谎。
-     * 所以 `y` 的公式里只有 `total / max`，**没有减 min 的项**。
-     *
-     * X 用 index 等距而不是按真实日期间隔：时间轴上缺日会在等距图上留下一段
-     * 视觉空白（正确），而按日期比例画只会把"那天没数据"挤成零宽。
+     * **不能用 `toISOString().slice(0, 10)`**：那按 UTC 输出，东八区的本地零点
+     * 会退回前一天，热力图的每一格都会挪到错误的日期上（错一天不报错）。
      */
-    function trendGeometry(points) {
+    function dayKey(date) {
+      const pad = (value) => String(value).padStart(2, '0');
+      return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+    }
+
+    /**
+     * 热力图的强度档数：0 = 没有用量，1..4 = 有用量。
+     *
+     * 分档用 `total / max` 的**相对**比例，而不是绝对阈值：用量有两三个数量级的
+     * 波动（真机上见过同一天 7e7 与 1.5e9 并存），写死绝对阈值在这批数据下只会
+     * 把 7e7 判成最低档、让它看起来和"没有用量"差不多。
+     */
+    const HEAT_LEVELS = 4;
+
+    /**
+     * 一天的用量 → 强度档。
+     *
+     * 两个必须钉住的语义：
+     *   1. `max <= 0`（全零 / 坏数据）时一律 level 0，**不做除法**：除零会给出 NaN，
+     *      而 `NaN < 0.25` 是 false，格子会拿到 `data-level="NaN"`——颜色规则全都
+     *      匹配不上，整块图变成一排无色方块，不报错。
+     *   2. `total > 0` 时结果至少是 1，**不能是 0**：level 0 的语义是"这天没有用量"，
+     *      一个刚好低于 `0.25 × max` 的极小值若落进 0，图就会说"这天没用过"。
+     *      这也是"level 0 不参与 t/max 分档"的实现方式。
+     */
+    function heatLevel(total, max) {
+      if (!(Number.isFinite(total) && total > 0) || !(Number.isFinite(max) && max > 0)) return 0;
+      const ratio = total / max;
+      if (ratio >= 1) return HEAT_LEVELS;
+      if (ratio >= 0.72) return 3;
+      if (ratio >= 0.45) return 2;
+      if (ratio >= 0.25) return 1;
+      return 0;
+    }
+
+    /** 同一档内至少要有 1，避免"极小但非零"被 heatLevel 的阈值判成 0。 */
+    function levelOf(total, max) {
+      if (!(Number.isFinite(total) && total > 0)) return 0;
+      return Math.max(1, heatLevel(total, max));
+    }
+
+    /**
+     * 把 `timeline` 排成热力图网格：**列 = 周、行 = 星期**（0=周日）。
+     *
+     * 三条几何约定，任何一条错了都不会抛错、只会让图错位或撒谎：
+     *
+     *   1. **起点是"最早那天所在周的周日"，终点是"最晚那天所在周的周六"。**
+     *      起点若直接取最早那天本身，列就不再对齐到周：同一列里星期一和星期三
+     *      会挤在一起，整个网格的"行 = 星期几"这个前提当场失效（负向对照 B 钉这条）。
+     *   2. **区间内的每一天都要有格子，包括中间没数据的天。** 宿主只给有量的天
+     *      （真机上两天之间隔了一周），不补 0 的话热力图会把 09-18 与 09-25 画成
+     *      相邻两格，读者会以为中间那天有别的值。
+     *   3. **首列起点之前、末列终点之后的格子是 null**，不画也不参与 hover。
+     *      把它们画成 level 0 会让"这一天在统计范围外"和"这天没用过"混为一谈。
+     *
+     * 顺带把每天的 attempts 一起带出来（没有 attempts 的记录沿用调用方在
+     * `normaliseTimeline` 里算好的值，这里再兜一次底）：将来要在 tooltip 里
+     * 显示"几次调用"时不必再回查 timeline。
+     */
+    function heatmapGeometry(points) {
       const list = Array.isArray(points) ? points : [];
-      const values = list
-        .map((point) => (Number.isFinite(point?.total) && point.total > 0 ? point.total : 0));
-      const max = values.reduce((peak, value) => Math.max(peak, value), 0);
-      // 纵轴跨度 = 基线到上沿的距离。最大值画在 y=0，0 画在 y=baseY。
-      const span = TREND_BASE_Y;
+      const cells = new Map();
+      let max = 0;
+
+      for (const point of list) {
+        if (!isObject(point)) continue;
+        const date = parseDay(point.day);
+        if (date === null) continue;
+        const total = Number.isFinite(point.total) && point.total > 0 ? point.total : 0;
+        // 同一天出现两条（宿主数据损坏）时取和：丢掉一条等于少算这一天的量。
+        const bucket = cells.get(point.day);
+        if (bucket === undefined) {
+          cells.set(point.day, {
+            day: point.day,
+            date,
+            total,
+            attempts: Number.isFinite(point.attempts) && point.attempts > 0 ? point.attempts : 0,
+          });
+        } else {
+          bucket.total += total;
+          bucket.attempts += Number.isFinite(point.attempts) && point.attempts > 0 ? point.attempts : 0;
+        }
+        if (total > max) max = total;
+      }
+
+      // 一条可用记录都没有（缺 timeline / 空数组 / day 全是坏格式）：返回空网格，
+      // 渲染层据此走空态。这里不抛，也不返回 null——上层只需要判 `days`。
+      if (cells.size === 0) {
+        return { weeks: [], columns: 0, days: 0, totalDays: 0, max: 0, from: null, to: null, weekStart: null, weekEnd: null };
+      }
+
+      // 首尾按**本地日期**比较，不按字符串：字符串比较要求宿主严格补零，
+      // `2026-9-8` 与 `2026-10-01` 一比就错。
+      let minDate = null;
+      let maxDate = null;
+      let from = null;
+      let to = null;
+      for (const cell of cells.values()) {
+        if (minDate === null || cell.date < minDate) { minDate = cell.date; from = cell.day; }
+        if (maxDate === null || cell.date > maxDate) { maxDate = cell.date; to = cell.day; }
+      }
+
+      // `getDay()` 就是本地星期（0=周日），往回退这么多天即本周周日。
+      const start = shiftDay(minDate, -minDate.getDay());
+      const end = shiftDay(maxDate, 6 - maxDate.getDay());
+      /*
+       * 列数 = ⌈（终点 − 起点）/ 7⌉。
+       *
+       * **不是 `除以 7 再取整 + 1`**：端点是周日..周六，所以 `end - start` 恰好是
+       * `7 × (columns - 1)` 天。写成 `Math.round((end - start) / 86400000 / 7) + 1`
+       * 会在 `end === start`（单天就在周六）时算出 2 列——多出一整列 7 个 null 占位，
+       * 并顺带把月份带整体推后一列。这个 off-by-one 不报错，只是图右边多一条空白，
+       * 而自检里"列数正好 N"的断言会立刻抓到。
+       */
+      const columns = Math.ceil((end - start) / 86400000 / 7);
+
+      const weeks = [];
+      const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+      for (let column = 0; column < columns; column += 1) {
+        const week = [];
+        for (let row = 0; row < 7; row += 1) {
+          // 该格对应的日期字符串由本地日期现算，不依赖宿主严格补零（`2026-9-8` 也算）。
+          const key = dayKey(cursor);
+          const cell = cells.get(key);
+          /*
+           * 区间是 **[start, end]**——即"最早那天所在周的周日"到"最晚那天所在周的周六"
+           * 这段连续的日历区间，**不是** [最早那天, 最晚那天]。
+           *
+           * 两者的差别只在两端补出来的那几天：区间内的日子必须都有格子（没量的补 0，
+           * 这才是热力图"哪几天断过"的信息所在）；区间外的格子留 null（不画、不参与
+           * hover），因为"不在统计范围"和"这天没用过"是两件事，混在一起图就撒谎。
+           * 用严格 min/max 当区间会把两端补出来的日子也说成"没用过"，
+           * 07:00 的边界因此错成"图的两端多出一截没有用量的底色"。
+           */
+          const inside = cursor.getTime() >= start.getTime() && cursor.getTime() <= end.getTime();
+          if (cell === undefined) {
+            week.push(inside ? { day: key, total: 0, attempts: 0, level: 0 } : null);
+          } else {
+            week.push({
+              day: cell.day,
+              total: cell.total,
+              attempts: cell.attempts,
+              level: levelOf(cell.total, max),
+            });
+          }
+          // 唯一推进 cursor 的地方。用 setDate 而不是 `+ 86400000`：
+          // 夏令时切换的那一天是 23/25 小时，按毫秒加会让整列慢/快一天。
+          cursor.setDate(cursor.getDate() + 1);
+        }
+        weeks.push(week);
+      }
+
       return {
-        width: 100,
-        height: TREND_HEIGHT,
-        baseY: TREND_BASE_Y,
-        // max === 0 时不做除法：全零给一条贴在零刻度上的平线，而不是 NaN 坐标。
-        points: values.map((value, index) => ({
-          x: values.length <= 1 ? 50 : (index / (values.length - 1)) * 100,
-          y: max > 0 ? TREND_BASE_Y - (value / max) * span : TREND_BASE_Y,
-          total: value,
-          index,
-        })),
+        weeks,
+        columns,
+        days: cells.size,
+        totalDays: columns * 7,
         max,
+        from,
+        to,
+        weekStart: dayKey(start),
+        weekEnd: dayKey(end),
       };
     }
 
@@ -607,9 +802,131 @@ window.__ModuleLoader__.load({
       return out;
     }
 
-    /** 折线的点序列 → `points` 属性值。 */
-    function polylinePoints(points) {
-      return points.map((point) => point.x + ',' + point.y).join(' ');
+    /**
+     * 按天热力图（GitHub 贡献图那种）。
+     *
+     * 为什么换成热力图而不是继续用折线：折线图的 X 轴必须**等距**（缺日在时间轴上
+     * 不能塌成零宽），于是"哪几天完全没用"这件事在图上根本看不出来——而"这周是不是
+     * 断过"恰恰是看用量时第一个想知道的问题。热力图把每个自然日都占一个格子，
+     * 缺日=底色格子，一眼就能看出来。
+     *
+     * 三种降级，一种都不能抛：
+     *   - **没有 timeline**（`hasTrend` 为假）：整块不出现（调用方判，旧数据下页面
+     *     回到原来的样子）；
+     *   - **空数组 / 全是坏日期**：`heatmapGeometry` 给出 `days === 0`，这里走空态
+     *     文案而不是画一个空网格——空网格和"这段时间用量是 0"长得一模一样，
+     *     而两者含义相反；
+     *   - **只有一天**：照常画**一列**（周日起到周六 7 个格子，1 格有量、6 格补 0）。
+     *     这一点是真机数据逼出来的：宿主只给"有用量的天"，实测就可能是孤零零的一天。
+     */
+    function renderHeatmap(points, t) {
+      const list = Array.isArray(points) ? points : [];
+      if (list.length === 0) return null;
+      const geometry = heatmapGeometry(list);
+
+      const head = h('div', { className: 'stu-figureHead' }, t('chartTrend'));
+
+      // 一条可用记录都没有，或全部为 0：给一句文案，不画网格。
+      // 全 0 时所有格子都是 level 0，画出来就是 7×N 个同色方块——它表达的
+      // "这段时间没有用量"用一句话说更清楚，也少 350 个无意义的 DOM 节点。
+      if (geometry.days === 0 || geometry.max <= 0) {
+        return h('section', { className: 'stu-figure', key: 'heatmap' },
+          head,
+          h('div', { className: 'stu-heatEmpty' }, t('trendEmpty')));
+      }
+
+      /*
+       * 月份带：只在**新月份的第一列**写标签。
+       *
+       * 53 列的月份带若每列都标，就会是一排同样的 "MM"；若按 `column % 4` 之类的
+       * 固定间隔标，月份边界又会落在两列之间、标在错误的列上方。
+       *
+       * 取值必须用**第一格有实际用量的日期**，不能用"该列第一个非 null 格子"：
+       * 首列前面几天是补出来的 0（真机数据里 09-13 那一列的前 5 天就是），
+       * 拿它们判月份会把 5 月底的补 0 格当成"这是 5 月的列"，于是 6 月的图顶着
+       * "5月"。这也是一处不报错、只是标签错的偏差。
+       */
+      const monthOf = (week) => {
+        const first = week.find((cell) => cell !== null && cell.total > 0) ?? null;
+        return first === null ? null : Number(first.day.slice(5, 7));
+      };
+      const monthCells = geometry.weeks.map((week, index) => {
+        const month = monthOf(week);
+        const previous = index === 0 ? null : monthOf(geometry.weeks[index - 1]);
+        const label = month !== null && month !== previous ? String(month) + '月' : '';
+        return h('span', {
+          className: 'stu-heatMonth',
+          key: 'month-' + index,
+          // 显式指定列，而不是靠自动排布：万一将来在带里插了别的节点，
+          // 自动排布会把后面所有标签整体挤到下一列，而肉眼只会觉得"月份偏了"。
+          style: { gridColumn: String(index + 1) },
+        }, label);
+      });
+
+      /*
+       * 星期标签：**只标奇数行**（周一/周三/周五）。
+       * 七行全标在 11px 行高下会互相挤，标成 "Sun/Mon/Tue…" 反而更难对行；
+       * 隔行标已经足够让读者定位到具体是哪一天（配合格子的 title 给出完整日期）。
+       *
+       * 这三个字**不进文案表**：它们是 3 个单字，中英两表各存一份只会让键集合
+       * 检查多两处需要同步的死键风险，而"标签的语义"完全由图例与 title 承载。
+       */
+      const weekdayLabels = ['', '一', '', '三', '', '五', ''];
+      const labelCells = [];
+      for (let row = 0; row < 7; row += 1) {
+        labelCells.push(h('span', { className: 'stu-heatLabelCell', key: 'label-' + row },
+          weekdayLabels[row]));
+      }
+
+      const bodyCells = [];
+      for (let column = 0; column < geometry.weeks.length; column += 1) {
+        const week = geometry.weeks[column];
+        for (let row = 0; row < 7; row += 1) {
+          const cell = week[row];
+          // null 格子（本周之外的日期）**不渲染**：渲染成透明方块会留下 hover 热区，
+          // 鼠标停在"统计范围之外"上却弹出日期，比不弹更让人困惑。
+          if (cell === null || cell === undefined) continue;
+          bodyCells.push(h('div', {
+            className: 'stu-heatCell',
+            key: cell.day,
+            'data-level': String(cell.level),
+            style: { gridColumn: String(column + 1), gridRow: String(row + 1) },
+            title: fill(t('pointAria'), { day: cell.day, total: formatExact(cell.total) }),
+          }));
+        }
+      }
+
+      /*
+       * 列数写进 CSS 变量：`grid-template-columns:repeat(var(--stu-heat-weeks),14px)`
+       * 让列宽固定 14px，53 列就是 742px，**永远不会被压缩**。列宽一旦被压，
+       * 格子就不再是正方形，读者对"深浅"的判断会跟着出错。
+       */
+      const layout = { '--stu-heat-weeks': String(geometry.columns) };
+
+      return h('section', { className: 'stu-figure', key: 'heatmap' },
+        head,
+        // 外层横向滚动：371 天（53 列）在窄侧栏里也放得下，且是"内容滚动"而不是
+        // "格子压缩"。
+        h('div', { className: 'stu-heatScroll' },
+          h('div', { className: 'stu-heatLabels' },
+            h('span', { className: 'stu-heatLabelSpacer' }),
+            ...labelCells),
+          h('div', { className: 'stu-heatInner', style: layout },
+            h('div', { className: 'stu-heatMonths' }, ...monthCells),
+            h('div', { className: 'stu-heatBody' }, ...bodyCells))),
+        // 图例回答"深浅代表多少"：没有它，五档颜色只是五种装饰。
+        // level 0 的色块与网格里的 level 0 同色，读者才能把"底色=没有用量"对上。
+        // 色块用同一个 `.stu-heatCell` 类，尺寸/圆角与网格里的格子严格一致
+        // （另起一个"小色块"类很容易在后续调格子尺寸时忘记同步，图例就开始撒谎）。
+        h('div', { className: 'stu-heatLegend' },
+          h('span', null, t('heatLess')),
+          h('span', { className: 'stu-heatLegendScale' },
+            h('i', { className: 'stu-heatCell', 'data-level': '0' }),
+            h('i', { className: 'stu-heatCell', 'data-level': '1' }),
+            h('i', { className: 'stu-heatCell', 'data-level': '2' }),
+            h('i', { className: 'stu-heatCell', 'data-level': '3' }),
+            h('i', { className: 'stu-heatCell', 'data-level': '4' })),
+          h('span', null, t('heatMore'))));
     }
 
     /**
@@ -693,64 +1010,6 @@ window.__ModuleLoader__.load({
               h('span', { className: 'stu-donutTotal' }, formatTokens(grandTotal)),
               h('span', { className: 'stu-donutCaption' }, t('donutCenter')))),
           h('ul', { className: 'stu-donutLegend' }, legendItems)));
-    }
-
-    /**
-     * 折线图（按天趋势）。
-     *
-     * 没有 timeline 就不画——**返回 null，而不是画一条空坐标系**：
-     * 空坐标系在界面上和"这几天用量是 0"长得一模一样，而两者含义相反。
-     * "这段时间没有用量"用一句文案说清楚（`trendEmpty`），
-     * "宿主没给 timeline"则整块不出现（旧数据下页面回到原来的样子）。
-     */
-    function renderTrend(points, t) {
-      const list = Array.isArray(points) ? points : [];
-      if (list.length === 0) return null;
-      const geometry = trendGeometry(list);
-      const first = shortDay(list[0].day);
-      const last = shortDay(list[list.length - 1].day);
-      const range = fill(t('dayRange'), { from: first, to: last });
-
-      const inner = [];
-      if (geometry.max <= 0) {
-        // 全部为 0：不画折线。一条贴在零刻度上的线会被读成"一直有量但很小"。
-        inner.push(h('div', { className: 'stu-trendEmpty', key: 'empty' }, t('trendEmpty')));
-      } else if (geometry.points.length === 1) {
-        // 单点：折线需要两个点，一个点画出来是零长度线（什么都看不见）。
-        inner.push(h('svg', {
-          className: 'stu-trendSvg', viewBox: '0 0 100 30', preserveAspectRatio: 'none',
-          role: 'img', 'aria-label': fill(t('pointAria'), { day: first, total: formatExact(geometry.points[0].total) }),
-          key: 'svg',
-        }, h('line', {
-          className: 'stu-trendBase', x1: 0, y1: geometry.baseY, x2: 100, y2: geometry.baseY,
-        }), h('circle', {
-          className: 'stu-trendDot', cx: geometry.points[0].x, cy: geometry.points[0].y, r: 1.6,
-        }, h('title', null, fill(t('pointAria'), { day: first, total: formatExact(geometry.points[0].total) })))));
-      } else {
-        inner.push(h('svg', {
-          className: 'stu-trendSvg', viewBox: '0 0 100 30', preserveAspectRatio: 'none',
-          role: 'img', 'aria-label': range,
-          key: 'svg',
-        },
-        h('line', { className: 'stu-trendBase', x1: 0, y1: geometry.baseY, x2: 100, y2: geometry.baseY }),
-        h('polyline', { className: 'stu-trendLine', points: polylinePoints(geometry.points) }),
-        geometry.points.map((point, index) => h('circle', {
-          className: 'stu-trendDot',
-          key: 'dot-' + index,
-          cx: point.x, cy: point.y, r: 1.4,
-        }, h('title', null, fill(t('pointAria'), {
-          day: shortDay(list[index]?.day),
-          total: formatExact(point.total),
-        }))))));
-      }
-
-      return h('section', { className: 'stu-figure', key: 'trend' },
-        h('div', { className: 'stu-figureHead' }, t('chartTrend')),
-        ...inner,
-        // 只标首尾日期：30 天全标会糊成一团，而等距 X 轴上中间点的日期可由首尾推出来。
-        h('div', { className: 'stu-trendAxis' },
-          h('span', null, first),
-          h('span', null, last)));
     }
 
     /** 把汇总的 rows 归一成界面用的行（容错，坏数据不炸渲染）。 */
@@ -896,16 +1155,16 @@ window.__ModuleLoader__.load({
       } else {
         /*
          * 三个视图，三种问题，顺序从"整体"到"细节"：
-         *   环形图 → 谁占大头；折线图 → 什么时候用的；堆叠条 → 每个模型内部构成。
+         *   环形图 → 谁占大头；热力图 → 哪些天用的；堆叠条 → 每个模型内部构成。
          * 图表一律用**全部行 / 全部天**而不是当前页——它们是总览，翻页不该改变它。
          *
-         * 折线用 `hasTrend &&` 而不是 `renderTrend(...) ?? null`：后者在 React 里
+         * 热力图用 `hasTrend &&` 而不是 `renderHeatmap(...) ?? null`：后者在 React 里
          * 会把 `null` 当成一个子节点（渲染成空），语义上等价但要多想一步；
          * 显式条件也顺便让"没有 timeline 就整块不出现"这件事在源码里可断言。
          */
         const donut = renderDonut(rows, t);
         if (donut !== null) body.push(donut);
-        if (hasTrend) body.push(renderTrend(trendPoints, t));
+        if (hasTrend) body.push(renderHeatmap(trendPoints, t));
         body.push(renderChart(rows, t));
         const head = h('thead', { key: 'thead' }, h('tr', null,
           h('th', { className: 'stu-nameCol' }, t('colModel')),
@@ -1242,26 +1501,26 @@ window.__ModuleLoader__.load({
       /*
        * 图表的纯函数也走这个接缝。
        *
-       * 理由和 formatTokens 一样但更强：图**画错不会抛错**。Y 轴从 min 起、
-       * 环形图分母写成 max、缺 timeline 时画空坐标系——三者的表现都是"渲染成功的
-       * 一张图"，静态形状断言看不见。只有把归一化数学取出来跑真实输入，才能钉住。
+       * 理由和 formatTokens 一样但更强：图**画错不会抛错**。热力图的起点错开一天
+       * （列不对齐到周）、强度不分档、环形图分母写成 max、缺 timeline 时画空坐标系
+       * ——这些表现都是"渲染成功的一张图"，静态形状断言看不见。只有把归一化数学
+       * 取出来跑真实输入，才能钉住。
        */
       normaliseTimeline,
       shortDay,
-      trendGeometry,
+      heatmapGeometry,
       donutSegments,
-      polylinePoints,
       /*
        * 两个渲染函数也暴露出去。
        *
        * 只有纯函数数学可验证是不够的：**"降级分支有没有接上"** 是另一类错误。
-       * 例如 `trendGeometry` 对空序列返回零个点（数学正确），但渲染层若写成
-       * `points.length === 1 ? 圆点 : 折线`，单点之外的 0 点就会走进折线分支，
-       * 画出一条 `points=""` 的隐形线——算式全对，界面全错。自检脚本因此还要
+       * 例如 `heatmapGeometry` 对空序列返回零列（数学正确），但渲染层若写成
+       * `weeks.length === 1 ? 单列 : 网格`，单点之外的 0 列就会走进网格分支，
+       * 画出一堆 `data-level` 都没有的方块——算式全对，界面全错。自检脚本因此还要
        * 拿真实的行/序列走一遍渲染，按 className 找节点来断言存在与缺失。
        */
       renderDonut,
-      renderTrend,
+      renderHeatmap,
       // 组件本身也暴露出去，供渲染自检直接驱动。
       UsagePage,
       SessionMeter,

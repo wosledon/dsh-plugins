@@ -30,7 +30,9 @@ the browser side cannot compute by itself.
 - **Standalone page**: a sidebar panel icon (`sidebar.panellist`, id `token-usage`, order 30)
   plus a main-area page (`main`, the same key). This page is the **cross-session** table by
   model — model, input, output, cache read, cache write, total and share — sorted by total
-  descending, paginated at **20 rows per page**, with a **Refresh** button.
+  descending, paginated at **20 rows per page**, with a **Refresh** button. Above the table sit
+  two charts: a donut of the share by model, then a **per-day contribution heatmap** (one column
+  per week, one row per weekday, darker = more tokens that day).
 - **Real numbers only**: the counts come from the `usage` field on `assistant/message` events
   in the session log, exactly as the provider adapter reported it. The plugin **estimates
   nothing and computes no cost**.
@@ -221,9 +223,10 @@ again. If the profile cannot persist settings, the button is disabled and says s
 ### Automated checks (all exit 0, actually run in this session)
 
 ```powershell
-node scripts/test-fold.mjs        # all passed: 65 assertions
-node scripts/verify-layout.mjs    # all passed: 63 layout and structure assertions
-node scripts/verify-contract.mjs  # all passed: 261 assembly-shape assertions
+node scripts/test-fold.mjs        # all passed: 81 assertions
+node scripts/test-summary.mjs     # all passed: 35 assertions
+node scripts/verify-layout.mjs    # all passed: 189 layout and structure assertions
+node scripts/verify-contract.mjs  # all passed: 292 assembly-shape assertions
 ```
 
 `verify-contract.mjs` is the one that earns its keep on a plugin like this, because four
@@ -256,6 +259,13 @@ used and every class used is defined, colours only via `--dsw-alias-*` (with the
 documented `box-shadow` exception), no `word-break: break-all`, the root does not declare
 `height: 100%`, and **all hooks precede the first `return`** in both components — the rule
 whose violation blanks the whole slot with React #310.
+
+The chart maths is asserted by **running** it, not by pattern-matching the source, because a
+wrong chart renders happily and only lies. Two heatmap properties in particular are pinned:
+the columns must line up with calendar weeks (the grid starts on the Sunday of the earliest
+day's week, so every cell's row equals its real `getDay()`), and the intensity must occupy
+four tiers of one hue (a negative control that collapses it to `total > 0 ? 4 : 0` turns the
+suite red).
 
 The suite covers the pure-function layer — the one both sides of the plugin rely on for
 arithmetic:

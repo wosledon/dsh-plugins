@@ -11,9 +11,9 @@
  *   5. 文案键完整性（client.js 内的 zh/en 两份对象互不缺不多、无死引用、无死键）；
  *   6. Hook 顺序（所有 hook 必须在首个 return 之前——违反过就是 React #310 + 整个 slot 空白）；
  *   7. 席位注册（sidebar.panellist / main / 会话头部 utilities，且不顶掉官方控件）；
- *   8. 图表语义（把 client.js 用 React 桩跑起来，跑真实的纯函数：折线 Y 轴从 0 起、
- *      环形图分母是 grandTotal、缺 timeline / 单点 / 全零时的降级——这些错了都不报错，
- *      只是画出一张撒谎的图，正则看不见）。
+ *   8. 图表语义（把 client.js 用 React 桩跑起来，跑真实的纯函数：热力图列必须对齐到周、
+ *      强度必须分四档、环形图分母是 grandTotal、缺 timeline / 单天 / 全零时的降级——
+ *      这些错了都不报错，只是画出一张撒谎的图，正则看不见）。
  *
  * 第 8 组是唯一会**执行**被检代码的一组，桩与 verify-contract.mjs 保持一致：
  * 同一份 client.js 被两个脚本用不同的桩跑，会让"这里过那里不过"变成常态。
@@ -156,8 +156,41 @@ const SHADOW_EXCEPTION = /^box-shadow\s*:\s*[\s\S]*rgba\(0,\s*0,\s*0,\s*\.16\)$/
  * 放宽规则：只允许这四个值，且只允许出现在图表系列选择器上。
  */
 const CHART_PALETTE = ['#4D6BFE', '#22C55E', '#8B5CF6', '#F5A524'];
-const CHART_COLOR_RULE = /^\.stu-(seg|swatch)\[data-bucket="[^"]+"\]$|^\.stu-donutSeg(\[data-series="\d"\])?$|^\.stu-donutSwatch\[data-series="\d"\]$|^\.stu-trend(Line|Dot)$/;
+/*
+ * 热力图（`[data-level="1..4"]`）也进白名单，理由与四桶/圆环不同但同样可验证：
+ * 它表达的是**序数**（深浅 = 多少），所以四档必须同一个色相、只差不透明度。
+ * 白名单是按**色值**比对的，因此那四条写成 `#4D6BFE38 / 73 / B8 / 空` 这种八位
+ * 十六进制（alpha 后缀），色值仍落在 `#4D6BFE` 上；写成 `rgba(77,107,254,.22)`
+ * 反而无法与调色板比对，只能放宽规则——那正是这套断言要避免的。
+ */
+const CHART_COLOR_RULE = /^\.stu-(seg|swatch)\[data-bucket="[^"]+"\]$|^\.stu-donutSeg(\[data-series="\d"\])?$|^\.stu-donutSwatch\[data-series="\d"\]$|^\.stu-heatCell\[data-level="[1-4]"\]$/;
 const chartPaletteUse = [];
+/**
+ * 取一条声明的**基础色相**：`#4D6BFE` / `#4D6BFE38` / `rgba(77,107,254,.22)` 都归到
+ * `#4D6BFE`。
+ *
+ * 为什么要归一：热力图四档是同一个色相的四个不透明度，白名单必须能同时认下
+ * "裸的 `#4D6BFE`" 和"带 alpha 的 `#4D6BFE38`"，否则要么放宽规则（失去白名单的
+ * 意义），要么逼着把四档写成四个色相（那就变成分类色，读不出大小）。
+ * 归一之后**色相**仍然逐个白名单比对，"随手加第五个颜色"照样红。
+ */
+function basePaletteColor(value) {
+  const hex = /#([0-9a-fA-F]{3,8})\b/.exec(value);
+  if (hex !== null) {
+    const digits = hex[1];
+    // 只取色相部分：3 位补全、8 位截掉 alpha。
+    const six = digits.length <= 4
+      ? digits.slice(0, 3).split('').map((ch) => ch + ch).join('')
+      : digits.slice(0, 6);
+    return ('#' + six).toUpperCase();
+  }
+  const rgba = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(value);
+  if (rgba !== null) {
+    return ('#' + [rgba[1], rgba[2], rgba[3]]
+      .map((part) => Number(part).toString(16).padStart(2, '0')).join('')).toUpperCase();
+  }
+  return null;
+}
 const rawColorDecls = [];
 const rawColorValues = new Set();
 const strayVars = new Set();
@@ -173,11 +206,18 @@ for (const [selector, body] of rules) {
     const value = text.slice(colon + 1).trim();
     if (RAW_COLOR.test(value)) {
       for (const match of value.matchAll(/#[0-9a-fA-F]{3,8}\b|\brgba?\([^)]*\)|\bhsla?\([^)]*\)/g)) rawColorValues.add(match[0]);
-      if (isChartSeries) { chartPaletteUse.push(selector + ' = ' + value); continue; }
+      if (isChartSeries) { chartPaletteUse.push(selector + ' = ' + basePaletteColor(value)); continue; }
       if (!SHADOW_EXCEPTION.test(text)) rawColorDecls.push(selector + ' { ' + text + ' }');
     }
     for (const match of value.matchAll(/var\((--[A-Za-z0-9-]+)/g)) {
-      if (!match[1].startsWith('--dsw-')) strayVars.add(match[1]);
+      /*
+       * `--stu-heat-weeks` 是**插件自己的布局变量**（列数），不是颜色令牌，所以
+       * 不能一刀切要求所有 var() 都是 --dsw-。只有当这条声明真的在给颜色时
+       * （属性是颜色属性、或值里同时带色），引用的变量才必须是 --dsw-*——
+       * 这样"颜色偷偷走自定义体系"照样红，而布局变量不被误伤。
+       */
+      const looksLikeColor = COLOR_PROP.test(property) || RAW_COLOR.test(value);
+      if (looksLikeColor && !match[1].startsWith('--dsw-')) strayVars.add(match[1]);
     }
     if (isChartSeries) continue;
     // 只有「值里确实带颜色」的声明才要求用令牌；border-bottom:0 / border-radius:10px 不含颜色，跳过。
@@ -200,24 +240,35 @@ check(
   rawColorDecls.join(', '),
 );
 check(
-  '图表色板只用白名单里的四个色值（不允许随手加第五个颜色）',
+  '图表色板只用白名单里的四个**色相**（alpha 后缀允许，第五个色相不允许）',
   chartPaletteUse.length >= 12
-    && chartPaletteUse.every((entry) => CHART_PALETTE.some((color) => entry.endsWith(' ' + color))),
+    && chartPaletteUse.every((entry) => CHART_PALETTE.includes(entry.slice(entry.lastIndexOf(' = ') + 3))),
   chartPaletteUse.join(' | '),
 );
 check(
   '图表四桶与环形四段用的是**同一套**色板（两边不一致会让人读错归属）',
   ['#4D6BFE', '#22C55E', '#8B5CF6', '#F5A524'].every((color) =>
-    chartPaletteUse.filter((entry) => entry.endsWith(' ' + color)).length >= 2),
+    chartPaletteUse.filter((entry) => entry.endsWith(' = ' + color)).length >= 2),
   chartPaletteUse.join(' | '),
 );
 check(
+  '热力图四档只用 #4D6BFE 一个色相（四档同色相才读得出"深浅=多少"）',
+  chartPaletteUse.filter((entry) => /^\.stu-heatCell\[data-level="[1-4]"\] = /.test(entry))
+    .every((entry) => entry.endsWith(' = #4D6BFE')),
+  chartPaletteUse.filter((entry) => entry.startsWith('.stu-heatCell')).join(' | '),
+);
+check(
   '除上述白名单外没有其它裸颜色值',
-  [...rawColorValues].every((value) => /^rgba\(0,\s*0,\s*0,\s*\.16\)$/.test(value) || CHART_PALETTE.includes(value)),
+  [...rawColorValues].every((value) =>
+    /^rgba\(0,\s*0,\s*0,\s*\.16\)$/.test(value) || CHART_PALETTE.includes(basePaletteColor(value))),
   [...rawColorValues].join(', '),
 );
 check('颜色属性一律使用 var(--dsw-alias-*)', nonTokenColor.length === 0, nonTokenColor.join(', '));
-check('所有 var() 都在 --dsw- 命名空间内', strayVars.size === 0, [...strayVars].join(', '));
+check(
+  '颜色声明里出现的 var() 都在 --dsw- 命名空间内（插件自己的布局变量如 --stu-heat-weeks 不算颜色）',
+  strayVars.size === 0,
+  [...strayVars].join(', '),
+);
 check(
   '不出现 --dsw- 之外的色彩体系（--ant- / --el- / --arco- / --van- 等）',
   !/--(ant|el|arco|van|td|nut|semi)-/.test(source),
@@ -634,11 +685,11 @@ check(
 );
 
 /*
- * 环形图与折线图。
+ * 环形图与按天热力图。
  *
- * 这一组只看**形状**（有没有用对 SVG 元素、有没有走固定坐标系）。归一化数学
- * （Y 轴是否从 0 起、环形图分母是不是 grandTotal、缺 timeline 时是否降级）
- * 在第 8 组用运行时纯函数跑真实输入验证——静态正则看不出算式对不对。
+ * 这一组只看**形状**（有没有用对元素、列宽是不是固定 px）。归一化数学
+ * （列是否对齐到周、强度是否分四档、环形图分母是不是 grandTotal、缺 timeline
+ * 时是否降级）在第 8 组用运行时纯函数跑真实输入验证——静态正则看不出算式对不对。
  *
  * 为什么两处都要：形状对了算式错 = 画出一张撒谎的图；算式对了元素错 =
  * 画不出来。两类错误的排查手段完全不同，不该混在一条断言里。
@@ -686,56 +737,91 @@ check(
   /'aria-label':\s*title/.test(source) && /fill\(t\('donutAria'\),\s*\{\s*total:/.test(source),
 );
 
-check('渲染了折线图（renderTrend 被调用）', /renderTrend\(trendPoints, t\)/.test(source));
+check('渲染了按天热力图（renderHeatmap 被调用）', /renderHeatmap\(trendPoints, t\)/.test(source));
 check(
-  '折线图用固定 viewBox + preserveAspectRatio="none"（自适应容器宽度，不量 DOM）',
-  /viewBox:\s*'0 0 100 30'/.test(source) && /preserveAspectRatio:\s*'none'/.test(source),
+  '热力图用 CSS grid 手绘（没有 SVG、没有图表库；格子必须在宽高上等比才是正方形）',
+  /className:\s*'stu-heatBody'/.test(source)
+    && /className:\s*'stu-heatCell'/.test(source)
+    && !/stu-heatSvg/.test(source),
 );
 check(
-  '折线用 polyline + 点序列（不是一堆 div）',
-  /h\('polyline'/.test(source) && /points:\s*polylinePoints\(geometry\.points\)/.test(source),
+  '热力图列宽固定 14px（11px 格子 + 3px 间距），不随容器压缩',
+  /\.stu-heatBody\{[^}]*grid-template-columns:repeat\(var\(--stu-heat-weeks\),14px\)/.test(cssBlock)
+    && /\.stu-heatCell\{width:11px;height:11px/.test(cssBlock),
+  '把 14px 写成 1fr / minmax，53 列时格子会被压成矩形，深浅面积就不再可比',
+);
+check(
+  '列数由数据算出并写进 CSS 变量（371 天 = 53 列，列数不能写死）',
+  /'--stu-heat-weeks':\s*String\(geometry\.columns\)/.test(source),
+);
+check(
+  '每格都带 title（复用 pointAria：日期 + 数值），只靠颜色读不出具体哪天多少',
+  /title:\s*fill\(t\('pointAria'\),\s*\{\s*day:\s*cell\.day,\s*total:\s*formatExact\(cell\.total\)\s*\}\)/.test(source),
+);
+check(
+  '每格带 data-level 供 CSS 上色（颜色不进 JS，档位与配色分家）',
+  /'data-level':\s*String\(cell\.level\)/.test(source),
+);
+check(
+  'null 格子不渲染（区间外的日期不能有 hover 热区，否则会弹出"统计范围之外"的日期）',
+  /if \(cell === null \|\| cell === undefined\) continue;/.test(source),
+);
+check(
+  '左侧有星期标签（循环 7 行按行号取，不逐行硬编码）且只有奇数行写文字',
+  /const weekdayLabels = \[/.test(source)
+    && /for \(let row = 0; row < 7; row \+= 1\)/.test(source)
+    && /className:\s*'stu-heatLabelCell'/.test(source),
+);
+check(
+  '顶部月份标签只在新月份的第一列出现，且按"第一个有用量的格子"归属（不被首列补 0 带偏）',
+  /const monthOf = \(week\) => \{/.test(source)
+    && /cell !== null && cell\.total > 0/.test(source)
+    && /month !== null && month !== previous \? String\(month\) \+ '月' : ''/.test(source)
+    && /className:\s*'stu-heatMonth'/.test(source),
+);
+check(
+  '热力图有图例（少 → 多，五档色块），否则深浅只是装饰',
+  /className:\s*'stu-heatLegend'/.test(source) && /t\('heatLess'\)/.test(source) && /t\('heatMore'\)/.test(source),
+);
+check(
+  '热力图外层横向滚动（53 列不能撑破容器，也不能靠压缩格子解决）',
+  /\.stu-heatScroll\{[^}]*overflow-x:auto/.test(cssBlock),
+);
+check(
+  'level 0 用底色令牌（"没有用量"是底色，不是第五档强度）',
+  /\.stu-heatCell\{width:11px;height:11px;border-radius:2px;background:var\(--dsw-alias-bg-layer-2\)\}/.test(cssBlock),
 );
 /*
- * Y 轴从 0 起：`y = 基线 - (value / max) * 跨度`，全零时落在基线上。
- * 这条断言盯着算式本身——把 `value / max` 改成 `(value - min) / (max - min)`
- * 会同时打掉它和第 8 组的行为断言（负向对照 A 用的就是这条）。
+ * 四档强度必须是**同一个色相的四档不透明度**，不能是四个色相。
+ *
+ * 这是热力图唯一"看着像对的、其实读不出大小"的陷阱：分类色（四个色相）会让读者
+ * 以为四档是四种互不相干的类别，而这里要表达的是序数。断言直接钉住"四个声明里
+ * 只出现一个色值"，顺带钉住四档齐全。
  */
 check(
-  '折线 Y 轴从 0 起（y 里只有 value/max，没有减 min 的项）',
-  /y:\s*max > 0 \? TREND_BASE_Y - \(value \/ max\) \* span : TREND_BASE_Y/.test(source)
-    && /const span = TREND_BASE_Y/.test(source)
-    && !/\bmin\b/.test(extractFunctionBody(source, 'trendGeometry') ?? ''),
-  '若改成从 min 起，一条平线会被画成剧烈起伏——图不报错，只是撒谎',
+  '强度四档是同一色相的四个不透明度（不是四个色相的四路分类色）',
+  ['.stu-heatCell[data-level="1"]{background:#4D6BFE38}',
+    '.stu-heatCell[data-level="2"]{background:#4D6BFE73}',
+    '.stu-heatCell[data-level="3"]{background:#4D6BFEB8}',
+    '.stu-heatCell[data-level="4"]{background:#4D6BFE}'].every((rule) => cssBlock.includes(rule))
+    && new Set((cssBlock.match(/\.stu-heatCell\[data-level="[1-4]"\]\{background:(#[0-9A-Fa-f]+)\}/g) ?? [])
+      .map((rule) => /(#[0-9A-Fa-f]{6})/.exec(rule)[1])).size === 1,
 );
 check(
-  '折线有零刻度基线（线是刻度不是数据，用 border-l1 不用品牌色）',
-  /className:\s*'stu-trendBase'/.test(source) && /\.stu-trendBase\{[^}]*--dsw-alias-border-l1/.test(cssBlock),
+  '全是 0 时不画网格，只留一句空态文案（7×N 个同色方块说明不了"没有用量"）',
+  /if \(geometry\.days === 0 \|\| geometry\.max <= 0\)/.test(source)
+    && /className:\s*'stu-heatEmpty'[\s\S]{0,40}t\('trendEmpty'\)/.test(source),
 );
 check(
-  '折线只标首尾日期（MM-DD），不逐日标（30 天会糊成一团）',
-  /const first = shortDay\(list\[0\]\.day\)/.test(source)
-    && /const last = shortDay\(list\[list\.length - 1\]\.day\)/.test(source)
-    && /className:\s*'stu-trendAxis'/.test(source),
-);
-check(
-  '单点时画圆点而不是零长度折线（单点折线什么都看不见）',
-  /geometry\.points\.length === 1/.test(source) && /className:\s*'stu-trendDot'/.test(source),
-);
-check(
-  '每个数据点带 <title>（日期 + 数值；只靠形状读不出具体哪天多少）',
-  (source.match(/h\('title',\s*null,/g) ?? []).length >= 3,
-  '实际 ' + (source.match(/h\('title',\s*null,/g) ?? []).length + ' 处',
-);
-check(
-  '没有 timeline 时整块折线图不出现（不是画一条空坐标系）',
-  /if \(hasTrend\) body\.push\(renderTrend\(trendPoints, t\)\)/.test(source)
+  '没有 timeline 时整块热力图不出现（不是画一个空网格）',
+  /if \(hasTrend\) body\.push\(renderHeatmap\(trendPoints, t\)\)/.test(source)
     && /timelinePresent:\s*timeline\.length > 0/.test(source),
 );
 check(
-  '图表顺序：环形图 → 折线图 → 按模型构成（从整体到细节）',
+  '图表顺序：环形图 → 热力图 → 按模型构成（从整体到细节）',
   (() => {
     const donut = source.indexOf('body.push(donut)');
-    const trend = source.indexOf('body.push(renderTrend(trendPoints, t))');
+    const trend = source.indexOf('body.push(renderHeatmap(trendPoints, t))');
     const composition = source.indexOf('body.push(renderChart(rows, t))');
     return donut > 0 && trend > donut && composition > trend;
   })(),
@@ -890,84 +976,312 @@ check(
 const need = (name) => (internals !== null && typeof internals[name] === 'function' ? internals[name] : null);
 const normaliseTimelineFn = need('normaliseTimeline');
 const shortDayFn = need('shortDay');
-const trendGeometryFn = need('trendGeometry');
+const heatmapGeometryFn = need('heatmapGeometry');
 const donutSegmentsFn = need('donutSegments');
-const polylinePointsFn = need('polylinePoints');
 
 check(
-  '__internals 暴露图表纯函数（normaliseTimeline / trendGeometry / donutSegments / shortDay）',
-  normaliseTimelineFn !== null && shortDayFn !== null && trendGeometryFn !== null
-    && donutSegmentsFn !== null && polylinePointsFn !== null,
+  '__internals 暴露图表纯函数（normaliseTimeline / heatmapGeometry / donutSegments / shortDay）',
+  normaliseTimelineFn !== null && shortDayFn !== null && heatmapGeometryFn !== null
+    && donutSegmentsFn !== null,
 );
 
-/* ---- 8.a 折线图：Y 轴必须从 0 起 ---- */
-if (trendGeometryFn !== null && shortDayFn !== null && polylinePointsFn !== null) {
+/* ---- 8.a 热力图：列必须对齐到周、强度必须分四档 ---- */
+if (heatmapGeometryFn !== null && shortDayFn !== null) {
   /*
-   * 这组数字是刻意挑的：900 / 1000 两条平线，min 接近 max。
-   * 从 0 起 → 两个点都贴近零刻度（差 1 个单位），平；从 min 起 → 一个贴顶一个贴底（差 24），
-   * 看起来像暴涨十倍。同一份数据，两种画法给人的结论相反，而都不报错。
+   * 取某一列里第一个非 null 格子。首列的首个非 null 格子就是区间起点，
+   * 用它断言"列对齐到周"——起点错开一天，这里立刻红。
    */
-  const flat = trendGeometryFn([{ total: 900 }, { total: 1000 }]);
+  const firstCell = (geometry, column) => (geometry.weeks[column] ?? []).find((cell) => cell !== null) ?? null;
+  const lastCell = (geometry, column) => {
+    const week = geometry.weeks[column] ?? [];
+    for (let index = week.length - 1; index >= 0; index -= 1) {
+      if (week[index] !== null) return week[index];
+    }
+    return null;
+  };
+  const levelsOf = (geometry, day) => {
+    for (const week of geometry.weeks) {
+      for (const cell of week) if (cell !== null && cell.day === day) return cell.level;
+    }
+    return null;
+  };
+  /*
+   * "行号 = 真实 getDay()"是整张图的地基：行错了，"周日那一行"就不是周日。
+   * 用**索引**而不是 `week.indexOf(cell)` 遍历——`week` 里装的是新建的格子对象，
+   * 拿它去 indexOf 会得到 0，那样断言会永远"通过"（自证式断言比没有还坏）。
+   */
+  const rowMatchesWeekday = (geometry) => geometry.weeks.every((week) =>
+    week.every((cell, row) => {
+      if (cell === null) return true;
+      const [y, m, d] = cell.day.split('-').map(Number);
+      return new Date(y, m - 1, d).getDay() === row;
+    }));
+
+  /*
+   * 真机数据的形状：只有两天，中间隔了 6 个空日，量级差 22 倍。
+   * 这组数字同时钉三件事——列对齐到周、中间空缺日必须补 0、强度必须分档。
+   */
+  // 两端都对齐到周日/周六之后，`end - start` 恰好是 `7 × (columns - 1)` 天。
+  const real = heatmapGeometryFn([
+    { day: '2026-09-18', total: 70216976, attempts: 502 },
+    { day: '2026-09-25', total: 1547482736, attempts: 4051 },
+  ]);
   check(
-    'Y 轴从 0 起：900 与 1000 在图上高度接近（差 ≤ 3 个单位）',
-    Math.abs(flat.points[0].y - flat.points[1].y) <= 3,
-    'y=' + flat.points.map((point) => point.y).join(' / '),
+    '起点是最早那天所在周的周日（09-18 是周五 → 首列起点 2026-09-13）',
+    firstCell(real, 0)?.day === '2026-09-13',
+    String(firstCell(real, 0)?.day),
   );
   check(
-    '最大值落在轴上沿（value === max → y === 0）',
-    flat.points[1].y === 0,
-    String(flat.points[1].y),
+    '终点是最晚那天所在周的周六（09-25 是周五 → 末格 2026-09-26）',
+    lastCell(real, real.columns - 1)?.day === '2026-09-26',
+    String(lastCell(real, real.columns - 1)?.day),
+  );
+  check(
+    '09-18 落在首列第 5 行（周日=0 → 周五=5），列真的对齐到周',
+    real.weeks[0]?.[5]?.day === '2026-09-18',
+    JSON.stringify((real.weeks[0] ?? []).map((cell) => cell?.day ?? null)),
+  );
+  check(
+    '09-25 落在末列第 5 行（第二周对齐到同一行：跨周不会错位）',
+    real.weeks[real.columns - 1]?.[5]?.day === '2026-09-25',
+    JSON.stringify((real.weeks[real.columns - 1] ?? []).map((cell) => cell?.day ?? null)),
+  );
+  check(
+    '两列 × 7 行 = 14 格全部落在区间内（补 0 的 12 格 + 有量的 2 格，没有 null）',
+    real.columns === 2 && real.weeks.length === 2
+      && real.weeks.flat().filter((cell) => cell !== null && cell.total === 0).length === 12
+      && real.weeks.flat().filter((cell) => cell === null).length === 0
+      && real.weeks.flat().filter((cell) => cell !== null).length === 14,
+    'columns=' + real.columns
+      + ' 补 0 格=' + real.weeks.flat().filter((cell) => cell !== null && cell.total === 0).length
+      + ' null 格=' + real.weeks.flat().filter((cell) => cell === null).length,
+  );
+  check(
+    'days / from / to 反映的是**有用量的天**（2 天），不是格子数',
+    real.days === 2 && real.from === '2026-09-18' && real.to === '2026-09-25',
+    'days=' + real.days + ' from=' + real.from + ' to=' + real.to,
+  );
+  check(
+    'max 取这批数据的最大 total',
+    real.max === 1547482736,
+    String(real.max),
+  );
+  /*
+   * 这一条就是"分四档"的核心：量级差 22 倍的两天必须落在不同的档上，
+   * 而且小的那天不能掉进 level 0（level 0 的语义是"这天没有用量"）。
+   */
+  check(
+    '强度按 total/max 分四档：7e7 与 1.5e9 分属不同档，且都 ≥ 1（不能掉进"没有用量"）',
+    levelsOf(real, '2026-09-18') === 1 && levelsOf(real, '2026-09-25') === 4,
+    '09-18 → level ' + levelsOf(real, '2026-09-18') + '，09-25 → level ' + levelsOf(real, '2026-09-25'),
+  );
+  check(
+    '档位值域只有 0..4 五个整数（CSS 的 [data-level] 规则只写了五条）',
+    real.weeks.flat().filter((cell) => cell !== null)
+      .every((cell) => Number.isInteger(cell.level) && cell.level >= 0 && cell.level <= 4),
+  );
+  check(
+    '极小但非零的用量也是 level 1，不会被分档阈值吃掉（"用过一点"≠"没用过"）',
+    levelsOf(heatmapGeometryFn([{ day: '2026-06-01', total: 1000 }, { day: '2026-06-02', total: 1 }]), '2026-06-02') === 1,
+  );
+  check(
+    'attempts 原样带给渲染层（将来在 tooltip 里显示调用次数不必回查 timeline）',
+    real.weeks[0]?.[5]?.attempts === 502
+      && real.weeks[real.columns - 1]?.[5]?.attempts === 4051,
+    '首列周五 ' + real.weeks[0]?.[5]?.attempts + '，末列周五 ' + real.weeks[real.columns - 1]?.[5]?.attempts,
   );
 
-  const zeros = [{ day: '2026-06-01', total: 0 }, { day: '2026-06-02', total: 0 }];
-  const zeroGeometry = trendGeometryFn(zeros);
-  check('全零时 max 为 0', zeroGeometry.max === 0, String(zeroGeometry.max));
+  /* ---- 跨月 / 跨年：月份带与 53 列上限 ---- */
+  const acrossMonth = heatmapGeometryFn([
+    { day: '2026-01-31', total: 10 },
+    { day: '2026-02-01', total: 20 },
+  ]);
   check(
-    '全零时不做除法（不产生 NaN 坐标），所有点落在零刻度上',
-    zeroGeometry.points.every((point) => point.y === zeroGeometry.baseY && Number.isFinite(point.y)),
-    zeroGeometry.points.map((point) => point.y).join(' / '),
-  );
-  check(
-    '零刻度（baseY）不在坐标系底边上（否则 0 值和基线糊成一条）',
-    zeroGeometry.baseY < zeroGeometry.height && zeroGeometry.baseY > 0,
-    'baseY=' + zeroGeometry.baseY + ' height=' + zeroGeometry.height,
-  );
-
-  const single = trendGeometryFn([{ day: '2026-06-05', total: 42 }]);
-  check(
-    '单点时 X 居中（x === 50）而不是贴在左沿或被 0 除成 NaN',
-    single.points.length === 1 && single.points[0].x === 50 && Number.isFinite(single.points[0].y),
-    JSON.stringify(single.points),
+    '跨月的两天落在相邻两列（周六 → 周日），列数正好 2 且没有多余的第三列',
+    acrossMonth.columns === 2
+      && acrossMonth.weeks[0]?.[6]?.day === '2026-01-31'
+      && acrossMonth.weeks[1]?.[0]?.day === '2026-02-01',
+    JSON.stringify(acrossMonth.weeks.map((week) => week.map((cell) => cell?.day ?? null))),
   );
 
-  const two = trendGeometryFn([{ day: '2026-06-01', total: 10 }, { day: '2026-06-11', total: 20 }]);
+  const acrossYear = heatmapGeometryFn([
+    { day: '2025-12-31', total: 1 },
+    { day: '2026-01-01', total: 2 },
+  ]);
   check(
-    'X 用 index 等距（首点 0、末点 100），不按真实日期间隔比例',
-    two.points[0].x === 0 && two.points[1].x === 100,
-    two.points.map((point) => point.x).join(' / '),
-  );
-  check(
-    '负值 / 非数被当成 0，不产生朝下的点（数据坏了也不画错）',
-    trendGeometryFn([{ day: '2026-06-01', total: -5 }, { day: '2026-06-02', total: 'x' }])
-      .points.every((point) => point.total === 0 && Number.isFinite(point.y)),
-  );
-  check('trendGeometry 对非数组输入不抛（降级到空序列）',
-    trendGeometryFn(null).points.length === 0 && trendGeometryFn(undefined).max === 0);
-
-  check(
-    'polylinePoints 输出 "x,y x,y"（而不是数组字面量被塞进属性）',
-    polylinePointsFn([{ x: 0, y: 26 }, { x: 100, y: 0 }]) === '0,26 100,0',
-    polylinePointsFn([{ x: 0, y: 26 }, { x: 100, y: 0 }]),
+    '跨年的两天对齐到同一行（周三 → 周四），列数 1（同一周）',
+    acrossYear.columns === 1
+      && acrossYear.weeks[0]?.[3]?.day === '2025-12-31'
+      && acrossYear.weeks[0]?.[4]?.day === '2026-01-01',
+    JSON.stringify(acrossYear.weeks[0].map((cell) => cell?.day ?? null)),
   );
 
+  const year = heatmapGeometryFn([
+    { day: '2026-01-01', total: 5 },
+    { day: '2026-12-30', total: 7 },
+  ]);
   check(
-    'shortDay 手工拆日期字符串（不用 new Date：按 UTC 解析会让趋势整体偏移一天）',
+    '跨度 364 天（宿主上限 371 天的邻域）时列数正好 53，两头各补半周也不溢出',
+    year.columns === 53,
+    'columns=' + year.columns,
+  );
+  check(
+    '整年网格的每一天都落在正确的星期行上（列对齐不会随列数累积漂移）',
+    rowMatchesWeekday(year),
+  );
+
+  /* ---- 单天：必须画出一列，且前后是 null 占位 ---- */
+  const single = heatmapGeometryFn([{ day: '2026-06-05', total: 42 }]);
+  check(
+    '只有一天时也画出**一列**（这一列是 7 个格子：1 格有量 + 6 格补 0，不是只画 1 格）',
+    single.columns === 1 && single.weeks.length === 1 && single.weeks[0].length === 7
+      && single.weeks[0].filter((cell) => cell === null).length === 0
+      && single.weeks[0][5]?.day === '2026-06-05' && single.weeks[0][5]?.level === 4,
+    JSON.stringify(single.weeks[0].map((cell) => cell?.day ?? null)),
+  );
+  check(
+    '单天时起点是它所在周的周日、终点是那一周的周六（不是只有那一天一格）',
+    single.weekStart === '2026-05-31' && single.weekEnd === '2026-06-06',
+    single.weekStart + ' → ' + single.weekEnd,
+  );
+  /*
+   * null 占位：区间（= 首列周日 .. 末列周六）**之外**的格子才是 null。
+   *
+   * 但要注意一个几何事实：**起点就是首列的周日、终点就是末列的周六**，所以
+   * `start..end` 这段连续区间覆盖了网格里的**每一个**格子——也就是说，在
+   * "最早/最晚那天都是真实日期"的前提下，null 分支其实是**不可达**的防御代码
+   * （它只有在 `start > minDate` 或 `end < maxDate` 时才可能命中，而这两条由
+   * 构造保证不成立）。这里不去伪造一个不可达的输入，而是把"可达的部分"钉死：
+   * 任何数据下网格里都不该出现 null，缺口一律是补 0 的格子。
+   *
+   * 对应的风险也记在这里：既然 null 不可达，渲染层的"null 不渲染"分支同样不会
+   * 被真机触发；它保留是为了让"区间外"这件事在代码里有明确表达。
+   */
+  check(
+    '网格里不出现 null 占位（区间覆盖整列，缺口一律是补 0 的格子）',
+    (() => {
+      const probes = [
+        [{ day: '2026-09-19', total: 1 }, { day: '2026-09-20', total: 2 }],
+        [{ day: '2026-09-18', total: 1 }, { day: '2026-09-27', total: 2 }],
+        [{ day: '2026-06-05', total: 42 }],
+      ];
+      return probes.every((points) => heatmapGeometryFn(points).weeks.flat().every((cell) => cell !== null));
+    })(),
+  );
+  check(
+    '区间内缺的那天补成 total 0 的格子（缺口是"这天没用过"，不是被跳过）',
+    (() => {
+      const probe = heatmapGeometryFn([
+        { day: '2026-09-18', total: 1 },
+        { day: '2026-09-27', total: 2 },
+      ]);
+      const flat = probe.weeks.flat();
+      return probe.columns === 3
+        && flat.filter((cell) => cell === null).length === 0
+        && flat.filter((cell) => cell !== null).length === 21
+        && flat.filter((cell) => cell !== null && cell.total === 0).length === 19;
+    })(),
+    (() => {
+      const probe = heatmapGeometryFn([{ day: '2026-09-18', total: 1 }, { day: '2026-09-27', total: 2 }]);
+      const flat = probe.weeks.flat();
+      return 'columns=' + probe.columns
+        + ' nulls=' + flat.filter((cell) => cell === null).length
+        + ' zeros=' + flat.filter((cell) => cell !== null && cell.total === 0).length;
+    })(),
+  );
+  /*
+   * 月份带取的是"第一个**有实际用量**的格子"的月份，而不是"第一个非 null 格子"：
+   * 首列前面几天是补出来的 0（真机上 09-13 那一列的前 5 天就是 5 月底/9 月初的
+   * 补 0 格），用它们判月份会让 6 月的图顶着 "5月"。这里用"06-01 那一周"的数据钉住。
+   */
+  check(
+    '月份标签按"第一个有用量的格子"归属，不被首列补 0 的空缺日带偏',
+    (() => {
+      const geometry = heatmapGeometryFn([
+        { day: '2026-06-01', total: 10 },
+        { day: '2026-06-02', total: 30 },
+      ]);
+      // 首列从 2026-05-31（周日）起，前 1 格是补 0 的 5 月；归属必须仍是 6 月。
+      const firstZero = geometry.weeks[0][0];
+      return geometry.weekStart === '2026-05-31'
+        && firstZero !== null && firstZero.total === 0 && firstZero.day.startsWith('2026-05');
+    })(),
+    '首列第 0 格是 2026-05-31 的补 0 格，渲染层的月份标签必须按 06-01 算',
+  );
+  check(
+    '单天就是 max 本身 → level 4（不能因为"只有一个值"就画成空白）',
+    single.weeks[0][5]?.level === 4 && single.max === 42,
+  );
+
+  /* ---- 全 0 / 空 / 坏数据：一律不抛，且不产生 NaN ---- */
+  const allZero = heatmapGeometryFn([
+    { day: '2026-06-01', total: 0 },
+    { day: '2026-06-02', total: 0 },
+  ]);
+  check(
+    '全 0 时 max 为 0（不因"有记录"就把 max 当成 0 以外的东西）',
+    allZero.max === 0 && allZero.days === 2,
+    'max=' + allZero.max + ' days=' + allZero.days,
+  );
+  check(
+    '全 0 时所有格子都是 level 0，且不做除法（不产生 NaN 档位）',
+    allZero.weeks.flat().filter((cell) => cell !== null)
+      .every((cell) => cell.level === 0 && Number.isFinite(cell.total)),
+  );
+  check(
+    '空数组 / null / undefined 都返回空网格（columns 0、weeks 空），而不是抛错',
+    [heatmapGeometryFn([]), heatmapGeometryFn(null), heatmapGeometryFn(undefined)]
+      .every((geometry) => geometry.columns === 0 && geometry.weeks.length === 0
+        && geometry.days === 0 && geometry.max === 0 && geometry.from === null),
+  );
+  check(
+    'day 是坏字符串 / 缺 day 的条目被丢掉（不是画到 1970 或 NaN 上）',
+    heatmapGeometryFn([{ day: 'unknown', total: 5 }, { total: 5 }, null, { day: '', total: 3 }]).days === 0,
+  );
+  check(
+    '负值 / 非数 total 当成 0（数据坏了也不画错），总数仍算"有用量的天"',
+    (() => {
+      const bad = heatmapGeometryFn([
+        { day: '2026-06-01', total: -5 },
+        { day: '2026-06-02', total: 'x' },
+      ]);
+      return bad.weeks.flat().filter((cell) => cell !== null).every((cell) => cell.total === 0 && cell.level === 0);
+    })(),
+  );
+  check(
+    '同一天出现两条记录时取和并发同一档（丢掉一条等于少算那天的量）',
+    (() => {
+      const merged = heatmapGeometryFn([
+        { day: '2026-06-01', total: 3 },
+        { day: '2026-06-01', total: 4 },
+        { day: '2026-06-02', total: 7 },
+      ]);
+      return merged.days === 2 && merged.max === 7
+        && merged.weeks.flat().filter((cell) => cell !== null && cell.day === '2026-06-01')
+          .every((cell) => cell.total === 7 && cell.level === 4);
+    })(),
+  );
+  /*
+   * 日期必须按**本地**时区算：`Date.parse('2026-06-05')` 按 UTC 解析，
+   * 东八区会把它读成 06-05 08:00，`getDay()` 仍是 5；但西半球会退回 06-04，
+   * 整张图的行会错一格。这条断言用"行号 = 真实 getDay()"把本地语义钉死，
+   * 任何改用 UTC 解析的写法都会红。
+   */
+  check(
+    '列内行号严格等于本地 getDay()（不用 Date.parse 的 UTC 语义，否则整图错一格）',
+    rowMatchesWeekday(heatmapGeometryFn([
+      { day: '2026-03-01', total: 1 },
+      { day: '2026-11-30', total: 2 },
+    ])),
+  );
+  check(
+    'shortDay 手工拆日期字符串（不用 new Date：按 UTC 解析会让标签整体偏移一天）',
     shortDayFn('2026-06-01') === '06-01' && shortDayFn('2026-6-9') === '06-09',
     shortDayFn('2026-06-01') + ' / ' + shortDayFn('2026-6-9'),
   );
   check('shortDay 对非日期字符串原样返回，不抛', shortDayFn('unknown') === 'unknown');
 } else {
-  check('折线图纯函数可取（否则 Y 轴从 0 起无法验证）', false);
+  check('热力图纯函数可取（否则列对齐与强度分档无法验证）', false);
 }
 
 /* ---- 8.b timeline 缺失 / 空 / 坏数据时必须降级 ---- */
@@ -1050,14 +1364,15 @@ if (donutSegmentsFn !== null) {
 
 /* ---- 8.d 渲染出来的树：降级分支到底有没有接上 ---- */
 const renderDonutFn = need('renderDonut');
-const renderTrendFn = need('renderTrend');
+const renderHeatmapFn = need('renderHeatmap');
 
 /**
  * 按 className 在 React 元素树里找节点。
  *
  * 桩把 `h('div', {…}, …)` 变成 `{ type, props, children }`，所以这里能像查 DOM
  * 一样按类名找——**渲染自检必须看渲染结果**：算式对、元素也写对了，但分支接错
- * （例如单点走折线分支画出 `points=""`）在源码正则里看不出来。
+ * （例如空序列也走进网格分支，画出一片 `data-level` 都没有的方块）在源码正则里
+ * 看不出来。
  */
 function findByClass(node, pattern, out) {
   if (node === null || node === undefined || typeof node !== 'object') return out;
@@ -1080,7 +1395,7 @@ function countClass(node, pattern) {
 /** 与组件里同一个 t：键→中文，用于结构检查时占位符能真的被替换掉。 */
 const tFor = (key) => (valueOf(zhBody, key) ?? key);
 
-if (renderDonutFn !== null && renderTrendFn !== null) {
+if (renderDonutFn !== null && renderHeatmapFn !== null) {
   const pageRows = [
     { key: 'a', provider: 'p1', model: 'm1', total: 60 },
     { key: 'b', provider: 'p2', model: 'm2', total: 30 },
@@ -1140,45 +1455,104 @@ if (renderDonutFn !== null && renderTrendFn !== null) {
     { day: '2026-06-02', total: 30 },
     { day: '2026-06-03', total: 20 },
   ];
-  const trendTree = renderTrendFn(manyPoints, tFor);
-  check('折线图渲染出 polyline（多点时才有折线）', hasClass(trendTree, /stu-trendLine/));
-  check('折线每条数据点都画了圆点与 <title>（悬停能看到具体哪天多少）',
-    countClass(trendTree, /stu-trendDot/) === 3
-      && findByClass(trendTree, /stu-trendDot/, []).every((node) => (node.children ?? []).some((child) => child?.type === 'title')));
-  check('折线图标注首尾日期（只标两个，不逐日标）',
-    countClass(trendTree, /stu-trendAxis/) === 1
-      && JSON.stringify(findByClass(trendTree, /stu-trendAxis/, [])[0]?.children ?? [])
-        .includes('06-01'));
-  check('折线图有零刻度基线', hasClass(trendTree, /stu-trendBase/));
+  const heatTree = renderHeatmapFn(manyPoints, tFor);
+  /*
+   * 格子数：3 天都在同一周（06-01 周一 ~ 06-03 周三），所以网格正好一个 7 格的一列
+   * （4 格由"区间内补 0"填上），再加上图例里的 5 个色块。
+   * `heatTree` 是唯一的输入，几何与渲染因此必须同时对得上——只对一边就会红。
+   */
+  check(
+    '热力图渲染出整列 7 格 + 图例 5 个色块（区间内补 0 的天也渲染）',
+    countClass(heatTree, /stu-heatCell/) === 7 + 5,
+    'heatCell 节点 ' + countClass(heatTree, /stu-heatCell/),
+  );
+  check(
+    '顶部月份标签只在新月份的第一列出现（其余列是空标签）',
+    (() => {
+      const labels = findByClass(heatTree, /stu-heatMonth/, [])
+        .map((node) => (node.children ?? []).filter((child) => typeof child === 'string').join(''));
+      return labels.filter((label) => label !== '').length === 1 && labels.includes('6月');
+    })(),
+    JSON.stringify(findByClass(heatTree, /stu-heatMonth/, [])
+      .map((node) => (node.children ?? []).filter((child) => typeof child === 'string').join(''))),
+  );
+  check(
+    '左侧星期标签有 7 行、只有奇数行写文字（Sun/Tue… 全标会挤成一团）',
+    (() => {
+      const cells = findByClass(heatTree, /stu-heatLabelCell/, []);
+      const texts = cells.map((node) => (node.children ?? []).filter((child) => typeof child === 'string').join(''));
+      return cells.length === 7 && texts.filter((text) => text !== '').length === 3;
+    })(),
+  );
+  check(
+    '热力图有图例：少 / 多 两个端点 + 五档色块（level 0 也在图例里，才能对上"底色=没有用量"）',
+    (() => {
+      const legend = findByClass(heatTree, /stu-heatLegend/, [])[0];
+      if (legend === undefined) return false;
+      const text = JSON.stringify(legend.children ?? []);
+      const swatches = findByClass(findByClass(legend, /stu-heatLegendScale/, [])[0] ?? [], /stu-heatCell/, []);
+      return text.includes('少') && text.includes('多') && swatches.length === 5
+        && swatches.map((node) => node.props['data-level']).join(',') === '0,1,2,3,4';
+    })(),
+  );
+  check(
+    '列数写进 CSS 变量 --stu-heat-weeks（渲染树里能读到，53 列时列宽才固定）',
+    typeof findByClass(heatTree, /stu-heatInner/, [])[0]?.props?.style?.['--stu-heat-weeks'] === 'string',
+  );
+  /*
+   * 只查 `stu-heatBody` 里的格子：图例也用 `.stu-heatCell`（尺寸与网格严格一致，
+   * 免得调格子尺寸时图例忘同步），所以按类名在整个树里数会把 5 个图例色块算进来。
+   */
+  const gridCells = findByClass(findByClass(heatTree, /stu-heatBody/, [])[0] ?? [], /stu-heatCell/, []);
+  check(
+    '每格都带 title（日期 + 数值；只靠颜色读不出具体哪天多少）',
+    gridCells.length === 7
+      && gridCells.every((node) => typeof node.props.title === 'string' && node.props.title.includes('token')),
+    '网格格子 ' + gridCells.length + ' 个',
+  );
+  check(
+    '每格都带 data-level 0..4（CSS 靠它上色，颜色不进 JS）',
+    gridCells.every((node) => ['0', '1', '2', '3', '4'].includes(node.props['data-level'])),
+  );
+  check(
+    '每格用 grid-column / grid-row 显式定位（列=周、行=星期，不靠自动排布）',
+    gridCells.every((node) =>
+      typeof node.props.style?.gridColumn === 'string' && typeof node.props.style?.gridRow === 'string'),
+  );
+  check(
+    '网格整列 7 格都渲染（区间内补 0 的天也在），null 占位格不渲染',
+    countClass(heatTree, /stu-heatCell/) === 7 + 5,
+    'heatCell 节点 ' + countClass(heatTree, /stu-heatCell/),
+  );
 
-  const singleTree = renderTrendFn([{ day: '2026-06-05', total: 42 }], tFor);
+  const singleTree = renderHeatmapFn([{ day: '2026-06-05', total: 42 }], tFor);
   check(
-    '单点时画圆点、不画 polyline（零长度折线什么都看不见）',
-    countClass(singleTree, /stu-trendDot/) === 1 && !hasClass(singleTree, /stu-trendLine/),
+    '单天时也画出一列（1 个数据格 + 6 个补 0 格，加上图例 5 个色块）',
+    countClass(singleTree, /stu-heatCell/) === 7 + 5 && !hasClass(singleTree, /stu-heatEmpty/),
+    'heatCell 节点 ' + countClass(singleTree, /stu-heatCell/),
   );
-  const zeroTree = renderTrendFn([{ day: '2026-06-01', total: 0 }, { day: '2026-06-02', total: 0 }], tFor);
+  const zeroTree = renderHeatmapFn([{ day: '2026-06-01', total: 0 }, { day: '2026-06-02', total: 0 }], tFor);
   check(
-    '全是 0 时不画折线也不画点，只留一句空态文案（一条贴基线的线会被读成"一直有量但很小"）',
-    !hasClass(zeroTree, /stu-trendLine/) && !hasClass(zeroTree, /stu-trendDot/)
-      && hasClass(zeroTree, /stu-trendEmpty/),
+    '全是 0 时不画网格，只留一句空态文案（7×N 个同色方块说明不了"没有用量"）',
+    !hasClass(zeroTree, /stu-heatBody/) && hasClass(zeroTree, /stu-heatEmpty/),
   );
   check(
-    '空序列不渲染折线图（缺 timeline 时整块不出现，而不是一个空坐标系）',
-    renderTrendFn([], tFor) === null && renderTrendFn(null, tFor) === null,
+    '空序列不渲染热力图（缺 timeline 时整块不出现，而不是一个空网格）',
+    renderHeatmapFn([], tFor) === null && renderHeatmapFn(null, tFor) === null,
   );
   check(
     '归一化与渲染接得上：没有 timeline 的 summary → 空序列 → 不渲染',
-    renderTrendFn(normaliseTimelineFn({ rows: [] }), tFor) === null,
+    renderHeatmapFn(normaliseTimelineFn({ rows: [] }), tFor) === null,
   );
 } else {
   check('图表渲染函数可取（否则降级分支有没有接上无法验证）', false);
 }
 
 /* ---- 8.e 新增文案键：中英一致、占位符一致、都不含裸含义 ---- */
-if (internals !== null && typeof internals.trendGeometry === 'function') {
+if (internals !== null && typeof internals.heatmapGeometry === 'function') {
   // 文案表本身在第 5 组查；这里确认新键是"两处都有且真的被渲染用到"。
   for (const key of ['chartModels', 'chartTrend', 'chartComposition', 'donutAria', 'segmentAria',
-    'donutCenter', 'trendEmpty', 'dayRange', 'pointAria']) {
+    'donutCenter', 'trendEmpty', 'pointAria', 'heatLess', 'heatMore']) {
     check(
       '新增文案键 ' + key + ' 在中英两表都存在且被 t(…) 引用',
       new RegExp('^\\s*' + key + '\\s*:', 'm').test(zhBody)

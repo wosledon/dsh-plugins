@@ -26,7 +26,8 @@
 - **独立页面**：侧边栏面板图标（`sidebar.panellist`，id `token-usage`，order 30）
   加主区域页面（`main`，同一个 key）。这个页面是**跨会话**的按模型表格 ——
   模型、输入、输出、缓存读、缓存写、合计、占比 —— 按总量降序排列，
-  **每页 20 行**，带一个「刷新」按钮。
+  **每页 20 行**，带一个「刷新」按钮。表格上方还有两张图：按模型占比的环形图，
+  以及**按天的贡献热力图**（一列 = 一周，一行 = 一个星期几，越深 = 那天 token 越多）。
 - **只用真实数字**：计数来自会话日志里 `assistant/message` 事件的 `usage` 字段，
   就是提供方适配器上报的原样。本插件**不做任何估算，也不计算费用**。
 
@@ -200,9 +201,10 @@ profile 无法写入设置时，按钮会禁用并说明原因。
 ### 自动化检查（全部 exit 0，本会话实际运行）
 
 ```powershell
-node scripts/test-fold.mjs        # 全部通过：65 项断言
-node scripts/verify-layout.mjs    # 全部通过：63 项布局与结构断言
-node scripts/verify-contract.mjs  # 全部通过：261 项装配形状断言
+node scripts/test-fold.mjs        # 全部通过：81 项断言
+node scripts/test-summary.mjs     # 全部通过：35 项断言
+node scripts/verify-layout.mjs    # 全部通过：189 项布局与结构断言
+node scripts/verify-contract.mjs  # 全部通过：292 项装配形状断言
 ```
 
 `verify-contract.mjs` 在这个插件上最值得留着，因为本包有四条性质**没法靠运行它本身**验证：
@@ -227,6 +229,11 @@ node scripts/verify-contract.mjs  # 全部通过：261 项装配形状断言
 类都有定义、颜色只走 `--dsw-alias-*`（唯一例外是那处已记录的 `box-shadow`）、不出现
 `word-break: break-all`、根容器不声明 `height: 100%`，以及**两个组件里所有 hook 都在第一个
 `return` 之前** —— 违反这条会让整个 slot 变空白（React #310）。
+
+图表的数学是**跑出来**验证的，不是拿正则看源码 —— 图算错了照样渲染成功，只是撒谎。
+热力图有两条尤其被钉死：列必须对齐到自然周（网格从"最早那天所在周的周日"起画，
+于是每个格子的行号严格等于它真实的 `getDay()`）；强度必须落在**同一个色相的四档**上
+（负向对照把它压成 `total > 0 ? 4 : 0` 时，整个套件立刻变红）。
 
 这套断言覆盖的是纯函数层 —— 插件两侧都依赖它算数：
 
