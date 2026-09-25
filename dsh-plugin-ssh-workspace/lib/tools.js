@@ -51,7 +51,20 @@ const OUTPUT_SCHEMA = {
   },
 };
 
-const renderJson = (value) => JSON.stringify(value ?? null, null, 2);
+/**
+ * 工具结果的内容渲染。
+ *
+ * **必须返回内容块数组，不能返回字符串。** 一度写成
+ * `(value) => JSON.stringify(value)`，工具能注册、能被调用，但宿主拿到返回值后
+ * 会对它调 `.some`，于是每一次调用都失败在 `content.some is not a function`——
+ * 报错发生在渲染层，和工具逻辑本身毫无关系，很难往这个方向想。
+ *
+ * 形状与已真机验证的 scheduled-tasks 一致：`[{ type: 'text', text }]`，
+ * 且第一个参数是**调用参数**（这里用不到，保留占位以匹配签名）。
+ */
+function renderJson(_args, value) {
+  return [{ type: 'text', text: JSON.stringify(value ?? null, null, 2) }];
+}
 
 /**
  * 参数 schema（author DSL：属性名 -> 节点）。
@@ -223,7 +236,14 @@ async function runProbe(api, input) {
   const detail = result.ok ? '' : (result.detail !== '' ? result.detail : result.stderr.trim().slice(0, 500));
   return decorate({
     ok: result.ok,
-    code: result.ok ? undefined : 'SSH_FAILED',
+    /*
+     * 用条件展开而不是 `code: result.ok ? undefined : 'SSH_FAILED'`。
+     *
+     * 工具结果会先过 `snapshotToolValue()` 做**无损 JSON 快照**，显式的
+     * `undefined` 字段在那个过程里的下场取决于实现（是靠 JSON 序列化丢掉，
+     * 还是被判成"非无损 JSON"抛错）。没必要赌这一下——不带这个键就没有问题。
+     */
+    ...(result.ok ? {} : { code: 'SSH_FAILED' }),
     message: result.ok ? `${hostDisplayName(found.host)} 连通正常` : detail,
     durationMs: result.durationMs,
     duration: formatDuration(result.durationMs),

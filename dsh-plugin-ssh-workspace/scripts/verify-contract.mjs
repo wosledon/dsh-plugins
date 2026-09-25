@@ -364,6 +364,19 @@ realCheck('输出 schema 带 additionalProperties（与已验证的 scheduled-ta
   /additionalProperties:\s*true/.test(toolsCode));
 realCheck('参数用节点级 required: true',
   /HOST_ID = \{ type: 'string', required: true/.test(toolsCode));
+
+/*
+ * `render` 必须返回**内容块数组**。
+ *
+ * 真机实测：写成 `(value) => JSON.stringify(value)` 时工具能注册、能被调用，
+ * 但每次调用都失败在 `content.some is not a function`——宿主对返回值调 `.some`，
+ * 而字符串没有这个方法。报错发生在渲染层，与工具逻辑无关，很难往这个方向想。
+ * 正确形状与 scheduled-tasks 一致：`[{ type: 'text', text }]`。
+ */
+realCheck('render 返回内容块数组而不是字符串',
+  /function renderJson\([^)]*\)\s*\{\s*return \[\{ type: 'text'/.test(toolsCode), 'render 形状不对');
+realCheck('render 的第一个参数是调用参数（签名要匹配）',
+  /function renderJson\(_args, value\)/.test(toolsCode));
 realCheck('每个来源调用都有超时（exec.js 里自己累积并按字节封顶）', /truncated/.test(fs.readFileSync(path.join(root, 'lib/exec.js'), 'utf8')));
 realCheck('超时一定杀进程（否则挂住的 ssh 会一直占着宿主）',
   /child\.kill\('SIGKILL'\)/.test(fs.readFileSync(path.join(root, 'lib/exec.js'), 'utf8')));
