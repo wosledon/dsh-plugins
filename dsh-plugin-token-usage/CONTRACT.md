@@ -115,11 +115,23 @@ type View = {
 
 ### 3.2 通道选择（**易错点，务必按此实现**）
 
-| 模式 | 条件 | 用什么 |
+| 模式 | 条件 | 优先用 |
 | --- | --- | --- |
-| `editor` | `ctx.get('configEditor')` 有 `edit` + `configuration` | **首选** |
-| `settings` | 退而求其次：`ctx.get('settings')` 有 `mutate` + `describe` | 后备 |
-| `read-only` | 两者都不可用 | 只读内存，`isPersistent()` 为 false |
+| `editor` | `ctx.get('configEditor')` 有 `edit` + `configuration` | `configEditor` |
+| `settings` | 退而求其次：`ctx.get('settings')` 有 `mutate` + `describe` | `settings` |
+| `read-only` | 两者都不可用 | 只写内存，`isPersistent()` 为 false |
+
+**不变式（按成功回退，不是按可用性二选一）**：`mode` 只表示"优先用谁"。
+`persist()` 必须把**两条通道都列为候选**并逐个尝试，前一条抛错就继续试下一条，
+**两条都失败**才返回 `false`（并给出合并后的失败原因）。
+
+为什么这条是硬要求：`configEditor` 存在不等于它一定成功——条目可能还没被 patch 层
+认领、Loader 正在重载、校验拒绝。如果写成 `if (mode === 'editor') { …; return false }`，
+一旦编辑器通道失败就直接放弃，另一条明明可用的通道从不尝试，功能会**静默**变成
+"刷新了但没有数据"。
+
+**不变式**：`lastChannel()` 记录最近一次**实际成功**的通道（`'editor'` /
+`'settings'` / `null`），诊断时不必猜"到底是谁写进去的"。
 
 **为什么首选 `configEditor`**：`ctx.settings.mutate(ns, ops, revision)` 改的是
 **profile patch 层里已有的条目**。本插件的行由 bundle 自己的 `cordis.patch.yml`

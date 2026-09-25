@@ -633,19 +633,59 @@ check(
   absorbBlock !== null && absorbBlock.indexOf('row.inherited') < absorbBlock.indexOf('row.override'),
 );
 
+/*
+ * persist 被拆成两条通道各自一个函数，再由 persist() 按**成功**回退。
+ *
+ * 原先的写法是 `if (mode === 'editor') { … ; return false }`——一旦编辑器通道
+ * 失败就直接放弃，另一条明明可用的通道从不尝试。所以断言也分两层：
+ * 每条通道自己的职责（§6a）与"失败要退到另一条"（§6b）。
+ */
+const editorPersistBlock = blockAfter(storeCode, 'async function persistViaEditor()');
+check('persistViaEditor() 调用 editor.edit(entry, () => next)', editorPersistBlock !== null && /await editor\.edit\(entry, \(\) => next\)/.test(editorPersistBlock));
+check(
+  'persistViaEditor() 传回的是完整 raw config：显式带 scanLimit',
+  editorPersistBlock !== null && /[{,\s]scanLimit,/.test(editorPersistBlock),
+);
+check(
+  'persistViaEditor() 传回的是完整 raw config：显式带 internal',
+  editorPersistBlock !== null && /internal:\s*plainClone\(internal\)/.test(editorPersistBlock),
+);
+check(
+  'persistViaEditor() 的 next 也摊开了 inherited 与 override（不丢 bundle/补丁提供的值）',
+  editorPersistBlock !== null && /row\.inherited/.test(editorPersistBlock) && /row\.override/.test(editorPersistBlock),
+);
+check(
+  'findEntry 找不到条目时 persistViaEditor 抛错（好让 persist 退到另一条通道）',
+  editorPersistBlock !== null && /throw new Error/.test(editorPersistBlock),
+);
+
+const settingsPersistBlock = blockAfter(storeCode, 'async function persistViaSettings()');
+check('persistViaSettings() 调 mutate', settingsPersistBlock !== null && /settings\.mutate\(/.test(settingsPersistBlock));
+check(
+  'persistViaSettings() 的 ops 覆盖 scanLimit 与 internal 两条路径',
+  settingsPersistBlock !== null && /path: \['scanLimit'\]/.test(settingsPersistBlock) && /path: \['internal'\]/.test(settingsPersistBlock),
+);
+
 const persistBlock = blockAfter(storeCode, 'async function persist()');
-check('persist() 在 editor 模式下调用 editor.edit(...)', persistBlock !== null && /await editor\.edit\(entry, \(\) => next\)/.test(persistBlock));
+check('persist() 函数体可解析', persistBlock !== null);
+// 关键不变式：两条通道都在候选列表里，且是"逐个试、失败继续"的循环。
 check(
-  'persist() 传回的是完整 raw config：显式带 scanLimit',
-  persistBlock !== null && /[{,\s]scanLimit,/.test(persistBlock),
+  'persist() 把两条通道都列为候选（不是按可用性二选一）',
+  persistBlock !== null && /persistViaEditor/.test(persistBlock) && /persistViaSettings/.test(persistBlock),
 );
 check(
-  'persist() 传回的是完整 raw config：显式带 internal',
-  persistBlock !== null && /internal:\s*plainClone\(internal\)/.test(persistBlock),
+  'persist() 逐个尝试并在失败时继续（for + try/catch，不在 catch 里 return false）',
+  persistBlock !== null && /for \(const \[channel, attempt\] of attempts\)/.test(persistBlock)
+    && /catch \(error\) \{[\s\S]{0,160}?lastError/.test(persistBlock)
+    && !/catch \(error\) \{[\s\S]{0,160}?return false;[\s\S]{0,40}?\n\s*\}\s*\n\s*return true/.test(persistBlock),
 );
 check(
-  'persist() 的 next 也摊开了 inherited 与 override（不丢 bundle/补丁提供的值）',
-  persistBlock !== null && /row\.inherited/.test(persistBlock) && /row\.override/.test(persistBlock),
+  'persist() 两条都失败才返回 false，并给出合并后的失败原因',
+  persistBlock !== null && /两条通道都试过/.test(persistBlock) && /return false/.test(persistBlock),
+);
+check(
+  'persist() 记录实际成功的通道（lastChannel，诊断"到底是谁写进去的"）',
+  persistBlock !== null && /lastChannel = channel/.test(persistBlock),
 );
 
 const takeBlock = blockAfter(storeCode, 'async takeRefreshRequest()');
@@ -710,6 +750,60 @@ check(
 );
 check('read-only 时 isPersistent() 为 false', storeOf({}).isPersistent() === false);
 check('editor 时 isPersistent() 为 true', storeOf({ configEditor: editorStub }).isPersistent() === true);
+
+// —— 真调用：configEditor 失败时必须退到 settings ——
+//
+// 这是"按成功回退"的核心保证。原先的写法按**可用性**二选一：只要 configEditor
+// 存在就走它，一旦它失败就直接放弃，另一条明明可用的通道从不尝试。
+{
+  const fallbackMutations = [];
+  const failingEditor = {
+    configuration: () => [{
+      entry: { patchId: CONFIG_NS, options: { name: identity.packageName } },
+      inherited: {},
+      override: {},
+    }],
+    edit: async () => { throw new Error('loader busy'); },
+  };
+  const fallbackSettings = {
+    describe: async () => [],
+    mutate: async (ns, ops) => { fallbackMutations.push({ ns, ops }); },
+  };
+  const fallbackStore = store.createStore(
+    { get: (name) => ({ configEditor: failingEditor, settings: fallbackSettings })[name] },
+    { internal: {} },
+    identity,
+  );
+  const wrote = await fallbackStore.setSummary({ rows: [], scanned: 2, total: 2, truncated: false, skipped: 0, builtAt: 55 });
+  check('configEditor 抛错时 persist 仍成功（退到 settings）', wrote === true, String(wrote));
+  check('回退后 settings.mutate 确实被调用', fallbackMutations.length === 1, '实际 ' + fallbackMutations.length);
+  check('回退写入用 identity.ns 寻址', fallbackMutations[0]?.ns === CONFIG_NS, fmt(fallbackMutations[0]?.ns));
+  check('lastChannel 报告实际成功的通道是 settings', fallbackStore.lastChannel() === 'settings', fmt(fallbackStore.lastChannel()));
+}
+
+// —— 两条都失败时才真的失败 ——
+{
+  const deadEditor = {
+    configuration: () => [{
+      entry: { patchId: CONFIG_NS, options: { name: identity.packageName } },
+      inherited: {},
+      override: {},
+    }],
+    edit: async () => { throw new Error('editor dead'); },
+  };
+  const deadSettings = {
+    describe: async () => [],
+    mutate: async () => { throw new Error('settings dead'); },
+  };
+  const deadStore = store.createStore(
+    { get: (name) => ({ configEditor: deadEditor, settings: deadSettings })[name] },
+    { internal: {} },
+    identity,
+  );
+  const wrote = await deadStore.setSummary({ rows: [], scanned: 0, total: 0, truncated: false, skipped: 0, builtAt: 1 });
+  check('两条通道都失败时 setSummary 返回 false（不谎报成功）', wrote === false, String(wrote));
+  check('两条都失败时 lastChannel 仍是 null', deadStore.lastChannel() === null, fmt(deadStore.lastChannel()));
+}
 
 // —— 真调用：refresh/persist 走 editor 通道，且写回完整 raw config ——
 const edits = [];

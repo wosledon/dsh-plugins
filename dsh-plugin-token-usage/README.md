@@ -219,7 +219,32 @@ again. If the profile cannot persist settings, the button is disabled and says s
 
 ```powershell
 node scripts/test-fold.mjs        # all passed: 65 assertions
+node scripts/verify-layout.mjs    # all passed: 58 layout and structure assertions
+node scripts/verify-contract.mjs  # all passed: 244 assembly-shape assertions
 ```
+
+`verify-contract.mjs` is the one that earns its keep on a plugin like this, because three
+of this package's properties cannot be checked by running it:
+
+- **The two halves must agree on constants.** `client.js` cannot import `lib/constants.js`
+  (a client bundle only gets `require`), so `PANEL_ID`, `CONFIG_NS`, `PROJECTION_KEY` and
+  `TOKEN_BY_MODEL_KEY` exist twice. The script parses both sides and compares them, and
+  drives the browser half for real through a `window.__ModuleLoader__` stub.
+- **The two `formatTokens` implementations must agree value for value.** The duplication is
+  unavoidable for the same reason. The script extracts the browser half's copy from
+  `__internals` and compares it against `lib/fold.js` across 16 values plus the
+  `-1` / `NaN` / `Infinity` edges. A negative control that flips one threshold in either
+  file makes it fail, so the comparison is not a rubber stamp.
+- **Persistence must fall back on failure, not on availability.** `mode` selects a
+  preference; `persist()` tries both channels and only reports failure when both throw.
+  The script proves this behaviourally with stubs — a throwing `configEditor` still ends
+  up written through `settings`, and two dead channels return `false`.
+
+Layout conventions are assertions too (`verify-layout.mjs`): every `stu-*` class defined is
+used and every class used is defined, colours only via `--dsw-alias-*` (with the one
+documented `box-shadow` exception), no `word-break: break-all`, the root does not declare
+`height: 100%`, and **all hooks precede the first `return`** in both components — the rule
+whose violation blanks the whole slot with React #310.
 
 The suite covers the pure-function layer — the one both halves of the plugin rely on for
 arithmetic:

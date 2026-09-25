@@ -199,7 +199,26 @@ profile 无法写入设置时，按钮会禁用并说明原因。
 
 ```powershell
 node scripts/test-fold.mjs        # 全部通过：65 项断言
+node scripts/verify-layout.mjs    # 全部通过：58 项布局与结构断言
+node scripts/verify-contract.mjs  # 全部通过：244 项装配形状断言
 ```
+
+`verify-contract.mjs` 在这个插件上最值得留着，因为本包有三条性质**没法靠运行它本身**验证：
+
+- **两半的常量必须一致。** `client.js` 无法 import `lib/constants.js`（浏览器 bundle 只拿到
+  `require`），所以 `PANEL_ID`、`CONFIG_NS`、`PROJECTION_KEY`、`TOKEN_BY_MODEL_KEY` 各有两份。
+  脚本同时解析两侧并比对，还用 `window.__ModuleLoader__` 桩把浏览器半**真的**跑起来。
+- **两份 `formatTokens` 必须逐值一致。** 出于同样的原因这份重复无法避免。脚本从
+  `__internals` 取出浏览器半那份，与 `lib/fold.js` 逐值比对 16 个取值加上
+  `-1` / `NaN` / `Infinity` 三个边界。把任一侧的阈值改掉都会让它失败，所以这不是走过场。
+- **持久化必须按失败回退，而不是按可用性二选一。** `mode` 只决定"优先用谁"；
+  `persist()` 两条通道都试，只有两条都抛错才算失败。脚本用桩做了行为验证 ——
+  `configEditor` 抛错时仍会经 `settings` 写成功，两条都死则如实返回 `false`。
+
+布局约定同样被写成断言（`verify-layout.mjs`）：每个定义出来的 `stu-*` 类都被用到、每个用到的
+类都有定义、颜色只走 `--dsw-alias-*`（唯一例外是那处已记录的 `box-shadow`）、不出现
+`word-break: break-all`、根容器不声明 `height: 100%`，以及**两个组件里所有 hook 都在第一个
+`return` 之前** —— 违反这条会让整个 slot 变空白（React #310）。
 
 这套断言覆盖的是纯函数层 —— 插件两半都依赖它算数：
 

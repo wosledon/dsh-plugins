@@ -105,6 +105,8 @@ export function createStore(ctx, rawConfig, identity) {
   let internal = isObject(rawConfig?.internal) ? plainClone(rawConfig.internal) : {};
   let scanLimit = Number.isFinite(rawConfig?.scanLimit) ? rawConfig.scanLimit : 200;
   let entry = null;
+  /** 最近一次成功落盘走的通道；诊断用（"到底是谁写进去的"）。 */
+  let lastChannel = null;
 
   /**
    * 把「覆盖层 + 继承层」合成当前配置。
@@ -146,37 +148,63 @@ export function createStore(ctx, rawConfig, identity) {
     }
   }
 
-  /** 把完整 raw config 写回。`edit` 要的是完整值，不是增量。 */
+  /** `configEditor` 路径：按 Loader 条目寻址，回写完整 raw config。 */
+  async function persistViaEditor() {
+    const row = findEntry(editor.configuration(), identity);
+    if (row === undefined) throw new Error(`configEditor 里找不到条目 ${identity.ns}`);
+    entry = row.entry;
+    const next = {
+      ...(isObject(row.inherited) ? row.inherited : {}),
+      ...(isObject(row.override) ? row.override : {}),
+      scanLimit,
+      internal: plainClone(internal),
+    };
+    await editor.edit(entry, () => next);
+  }
+
+  /** `settings` 路径：按命名空间 + 路径增量写。 */
+  async function persistViaSettings() {
+    const ops = [
+      { op: 'set', path: ['scanLimit'], value: scanLimit },
+      { op: 'set', path: ['internal'], value: plainClone(internal) },
+    ];
+    await settings.mutate(identity.ns, ops, undefined);
+  }
+
+  /**
+   * 落盘。**按成功回退，而不是按可用性二选一。**
+   *
+   * `mode` 只表示"优先用谁"：`configEditor` 存在不等于它一定成功（条目可能还没
+   * 被 patch 层认领、Loader 正在重载、校验拒绝）。早先的写法是 `if (mode === 'editor')`
+   * 里失败就 `return false`——于是另一条通道明明可用却从不尝试。
+   * 现在两条都试，并把最终落在哪条记进 `lastChannel`，诊断时不必猜。
+   */
   async function persist() {
     if (mode === 'read-only') return false;
-    try {
-      if (mode === 'editor') {
-        const row = findEntry(editor.configuration(), identity);
-        if (row === undefined) return false;
-        entry = row.entry;
-        const next = {
-          ...(isObject(row.inherited) ? row.inherited : {}),
-          ...(isObject(row.override) ? row.override : {}),
-          scanLimit,
-          internal: plainClone(internal),
-        };
-        await editor.edit(entry, () => next);
+    const attempts = mode === 'editor'
+      ? [['editor', persistViaEditor], ['settings', canMutate ? persistViaSettings : null]]
+      : [['settings', persistViaSettings], ['editor', canEdit ? persistViaEditor : null]];
+    let lastError = null;
+    for (const [channel, attempt] of attempts) {
+      if (attempt === null) continue;
+      try {
+        await attempt();
+        if (lastChannel !== channel) lastChannel = channel;
         return true;
+      } catch (error) {
+        lastError = `${channel}: ${message(error)}`;
       }
-      const ops = [
-        { op: 'set', path: ['scanLimit'], value: scanLimit },
-        { op: 'set', path: ['internal'], value: plainClone(internal) },
-      ];
-      await settings.mutate(identity.ns, ops, undefined);
-      return true;
-    } catch (error) {
-      warn(`写入配置失败：${message(error)}`);
-      return false;
     }
+    warn(`写入配置失败（两条通道都试过）：${lastError ?? '无可用通道'}`);
+    return false;
   }
 
   return {
     mode,
+    /** 最近一次成功落盘走的通道（'editor' | 'settings' | null）。 */
+    lastChannel() {
+      return lastChannel;
+    },
     getSummary() {
       return internal.summary;
     },
