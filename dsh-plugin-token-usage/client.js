@@ -80,6 +80,13 @@ window.__ModuleLoader__.load({
       pointAria: '{day}：{total} token',
       heatLess: '少',
       heatMore: '多',
+      trendRange: '日期范围',
+      trendFrom: '起始日期',
+      trendTo: '结束日期',
+      trendLast7: '近 7 天',
+      trendLast30: '近 30 天',
+      trendAll: '全部',
+      trendClamped: '已按数据的实际跨度收紧范围。',
       loading: '载入中…',
       close: '关闭',
     };
@@ -128,6 +135,13 @@ window.__ModuleLoader__.load({
       pointAria: '{day}: {total} tokens',
       heatLess: 'Less',
       heatMore: 'More',
+      trendRange: 'Date range',
+      trendFrom: 'Start date',
+      trendTo: 'End date',
+      trendLast7: 'Last 7 days',
+      trendLast30: 'Last 30 days',
+      trendAll: 'All',
+      trendClamped: 'Range tightened to the data actually available.',
       loading: 'Loading…',
       close: 'Close',
     };
@@ -220,8 +234,13 @@ window.__ModuleLoader__.load({
        * 环形图回答"谁占大头"，堆叠条回答"每个模型的内部构成"，折线回答"什么时候用的"。
        * 三个问题不同，所以是三个视图而不是一个——之前只有堆叠条，于是"哪几天用量暴涨"
        * 和"整体份额"这两件事在界面上没有表达。
+       *
+       * 卡片统一 `position:relative`：它是热力图自绘 tooltip 的**浮层坐标系**。
+       * 浮层必须挂在相对定位的祖先上，而且不能放进 `.stu-heatScroll`——那个容器
+       * `overflow-x:auto`，而 `overflow-x:auto` 与 `overflow-y:visible` 不能共存
+       * （`visible` 会被算成 `auto`），绝对定位的子元素一定会被裁掉。
        */
-      '.stu-figure{display:flex;flex-direction:column;gap:10px;padding:14px;border:.5px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}',
+      '.stu-figure{position:relative;display:flex;flex-direction:column;gap:10px;padding:14px;border:.5px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}',
       '.stu-figureHead{font-size:12px;font-weight:600;line-height:18px;color:var(--dsw-alias-label-primary)}',
       /*
        * 环形用 grid 而不是 flex：图例条数不固定，flex 下长图例会把圆环挤扁成椭圆。
@@ -267,12 +286,36 @@ window.__ModuleLoader__.load({
        * 为什么网格用 CSS grid 而不是 SVG：热力图的格子必须是**正方形**。
        * SVG 要自适应宽度就得给 preserveAspectRatio="none"，那会把 `rect` 连同任何
        * 圆角一起非等比拉伸；上一版折线图的圆点就是被压成横向椭圆才挪出 SVG 的。
-       * 固定 px 的 div + CSS grid 没有这个问题，而且格子的 title 是原生 tooltip。
+       * 固定 px 的 div + CSS grid 没有这个问题；格子的具体数值改由自绘 tooltip 给出
+       * （原生 `title` 的样式由系统渲染、无法用 CSS 定制，真机反馈"和应用的设计语言
+       * 不一致"，所以不再用它）。
        *
        * 列 = 周、行 = 星期（0=周日）。列宽写死 14px（11px 格子 + 3px 间距），
        * 于是 53 列 = 742px，能塞进 980px 的限宽；再宽就由外层横向滚动，**不压缩格子**
        * ——格子一旦被压缩，深浅与面积就对不上，图会撒谎。
        */
+      /*
+       * 区间控件：热力图上方一行（两个日期输入 + 三个预设 + 一条"范围被收紧"的提示）。
+       *
+       * `flex-wrap:wrap` 不是可选项：侧栏窄，两个日期输入加三个按钮横排会溢出国界，
+       * 而这个容器外面只有横向滚动——溢出的部分连滚动条都够不到。换行只是变高。
+       */
+      '.stu-heatControls{display:flex;flex-wrap:wrap;align-items:center;gap:8px}',
+      '.stu-heatRange{display:inline-flex;align-items:center;gap:4px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}',
+      /*
+       * 日期输入**必须显式给令牌色**，不能靠浏览器默认外观：默认外观是按系统配色画的
+       * 浅色控件，深色主题下就是"白底黑字的一块"，与卡片底色打架。
+       * `bg-layer-2 / border-l2 / label-primary` 三件套在浅色与深色下都有对比度。
+       */
+      '.stu-heatDate{height:26px;padding:0 6px;border:.5px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;line-height:1}',
+      '.stu-heatPresets{display:inline-flex;align-items:center;gap:6px}',
+      /* 当前生效的预设：用底色 + 字重标出，不引入新颜色（`.stu-btn` 已有全部令牌色）。 */
+      '.stu-btn[aria-pressed="true"]{background:var(--dsw-alias-bg-layer-2);font-weight:600}',
+      /*
+       * "范围被数据收紧"的提示做成**可见文字**而不是 `title`：
+       * 原生 tooltip 正是这次要摆脱的东西（样式不可控），用它来解释夹取会很讽刺。
+       */
+      '.stu-heatHint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}',
       '.stu-heatScroll{display:flex;align-items:flex-start;width:100%;overflow-x:auto;overflow-y:hidden}',
       /*
        * 左侧星期标签**吸附**在滚动容器左边（sticky 而不是独立一列）：
@@ -315,7 +358,11 @@ window.__ModuleLoader__.load({
        * 白名单是**按色值**比对的，rgba 形式无法与 CHART_PALETTE 里的四个值对齐，
        * 只能再放宽一条规则；而"收紧成白名单"正是这套断言的价值所在。
        */
-      '.stu-heatCell:hover{outline:1px solid var(--dsw-alias-brand-primary);outline-offset:0}',
+      /*
+       * hover 与键盘聚焦共用同一圈描边：格子现在带 tabIndex，
+       * 聚焦时看不见焦点就等于"键盘用户没有 tooltip"。
+       */
+      '.stu-heatCell:hover,.stu-heatCell:focus-visible{outline:1px solid var(--dsw-alias-brand-primary);outline-offset:0}',
       '.stu-heatCell[data-level="1"]{background:#4D6BFE38}',
       '.stu-heatCell[data-level="2"]{background:#4D6BFE73}',
       '.stu-heatCell[data-level="3"]{background:#4D6BFEB8}',
@@ -324,6 +371,26 @@ window.__ModuleLoader__.load({
       '.stu-heatLegend{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:10px;line-height:14px;color:var(--dsw-alias-label-secondary)}',
       '.stu-heatLegendScale{display:inline-flex;align-items:center;gap:4px}',
       '.stu-heatEmpty{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
+      /*
+       * 自绘 tooltip（替代原生 `title`）。
+       *
+       * 为什么必须自己画：原生 `title` 的字色/底色/圆角由系统渲染，**无法用 CSS 定制**，
+       * 真机反馈"tooltip 的样式有问题"（一块系统默认样式的小方块，与应用的设计语言
+       * 完全不一致）。换成自己画的浮层之后，样式与其它浮层（`.stu-pop`）同一套令牌。
+       *
+       * 三个必须守住的点，任何一条漏掉都不会报错、只会让浮层看起来"偶尔坏了"：
+       *   1. **不能放进 `.stu-heatScroll`**：那个容器 `overflow-x:auto`，
+       *      `overflow-x:auto` 与 `overflow-y:visible` 不能共存（`visible` 会被算成
+       *      `auto`），绝对定位的子元素一定被裁掉。它挂在 `.stu-figure`
+       *      （已声明 `position:relative`）下，与滚动容器**平级**。
+       *   2. **`pointer-events:none` 是防抖动循环的关键**：漏了它，浮层会盖住相邻格子
+       *      → 触发 `mouseleave` → 浮层消失 → 指针又落回格子 `mouseenter` → 显示……
+       *      于是 hints 闪烁不止，且鼠标永远"跑不到"被盖住的格子。
+       *   3. **宽度写死 200px**：水平夹取要在事件里算出"半个浮层宽"当边界，
+       *      宽度由内容决定就没法算准（要测量就得再多渲染一轮）。它与 client.js 里的
+       *      `TIP_HALF_WIDTH = 100` **一一对应，改一处必须改另一处**。
+       */
+      '.stu-heatTip{position:absolute;z-index:2;width:200px;max-width:calc(100% - 8px);box-sizing:border-box;padding:4px 6px;border:.5px solid var(--dsw-alias-border-l1);border-radius:6px;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-primary);font-size:11px;line-height:16px;font-variant-numeric:tabular-nums;pointer-events:none;box-shadow:0 6px 16px rgba(0,0,0,.16)}',
       '.stu-notice{padding:8px 12px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
       '.stu-bar{height:4px;border-radius:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden;margin-top:6px}',
       '.stu-barFill{height:100%;background:var(--dsw-alias-brand-primary)}',
@@ -758,6 +825,170 @@ window.__ModuleLoader__.load({
       };
     }
 
+    /* ---------------- 区间的三个纯函数（默认窗口 / 夹取 / 过滤） ---------------- */
+
+    /**
+     * 默认窗口的长度（天，含首尾）。
+     *
+     * 30 天是"一个月"的近似。真机上 timeline 常跨半年到一年，53 列的热力图在侧栏里
+     * 得横滚才能看完，而"最近用得怎么样"才是打开页面时想问的第一个问题；
+     * 整段跨度仍然可看——把区间切到「全部」即可。
+     */
+    const DEFAULT_RANGE_DAYS = 30;
+
+    /**
+     * 三个预设区间：`[data-* 值, 天数, 文案键]`。天数为 0 = 全部（两端不限制）。
+     * 近 7 / 近 30 天与默认窗口**同一套锚点**（数据最晚那天），不是"今天"。
+     */
+    const RANGE_PRESETS = [
+      ['last7', 7, 'trendLast7'],
+      ['last30', DEFAULT_RANGE_DAYS, 'trendLast30'],
+      ['all', 0, 'trendAll'],
+    ];
+
+    /**
+     * tooltip 的几何常量。
+     *
+     * `TIP_HALF_WIDTH` 必须与 CSS 的 `.stu-heatTip{width:200px}` 同步：水平夹取要用
+     * "半个浮层宽"算边界，而事件里拿到的是格子的矩形、不是浮层的（浮层此刻还没渲染）。
+     * 高度只用来判断"格子上方还有没有地方"，估大一点无妨（大了只会更早翻到下方）。
+     */
+    const TIP_HALF_WIDTH = 100;
+    const TIP_EST_HEIGHT = 34;
+    const TIP_GAP = 4;
+
+    /**
+     * 从 timeline 里取出**数据的实际日期范围**（只认能解析出日期的条目）。
+     *
+     * 返回的是 canonical `YYYY-MM-DD`，不是原样的 day 字符串：`2026-9-8` 这种没补零的
+     * 写法在 `<input type="date">` 里会被浏览器判为非法值而**显示空白**，于是"输入框
+     * 是空的、图却画了一个月"，又是显示与实际不一致。日期对象一并返回，比较用它。
+     *
+     * 空 / 非数组 / 全是坏 day 时四项都是 null，不抛。
+     */
+    function dataBounds(days) {
+      const list = Array.isArray(days) ? days : [];
+      let minDate = null;
+      let maxDate = null;
+      let minKey = null;
+      let maxKey = null;
+      for (const point of list) {
+        if (!isObject(point)) continue;
+        const date = parseDay(point.day);
+        if (date === null) continue;
+        const time = date.getTime();
+        if (minDate === null || time < minDate.getTime()) { minDate = date; minKey = dayKey(date); }
+        if (maxDate === null || time > maxDate.getTime()) { maxDate = date; maxKey = dayKey(date); }
+      }
+      return { minDate, maxDate, minKey, maxKey };
+    }
+
+    /**
+     * 默认区间 = **数据末尾往前 span 天**（含首尾）。
+     *
+     * 两个刻意的选择，都有负向对照钉住：
+     *
+     *   1. 锚点是"数据里最晚的那一天"，**不是今天**。这份 timeline 是宿主扫描历史日志
+     *      的产物，可能已经陈旧；用今天当锚点会在数据末尾之后画出一大片空白列
+     *      （看起来像图坏了）。"最近一个月"要表达的从来是"数据里的最近一个月"。
+     *   2. 窗口被数据边界夹住：总跨度不足 span 天时用实际跨度，**不补出无数据的空列**
+     *      ——空列与"这天没用过"在图上长得一模一样，凭空多出来的列等于谎报统计范围。
+     *
+     * 空 / 坏 / 乱序输入一律返回 `{ from: null, to: null }`（= 两端不限制），不抛。
+     */
+    function defaultRange(days, span) {
+      const bounds = dataBounds(days);
+      if (bounds.maxDate === null) return { from: null, to: null };
+      const width = Number.isFinite(span) && span >= 1 ? Math.floor(span) : DEFAULT_RANGE_DAYS;
+      const start = shiftDay(bounds.maxDate, -(width - 1));
+      // 窗口起点早于数据起点时用数据起点：不造无数据的空列。
+      const from = start.getTime() < bounds.minDate.getTime() ? bounds.minKey : dayKey(start);
+      return { from, to: bounds.maxKey };
+    }
+
+    /**
+     * 把区间夹到**数据的实际范围**里，返回 `{ from, to, clamped }`。
+     *
+     * `clamped` 的定义只有一条：**返回值与输入的可解析端点不同**（含"不限制被解析成
+     * 数据边界"）。界面据此决定"要不要告诉用户范围被改过"，不必自己再比一遍。
+     *
+     * 规则，每条都有断言（verify-layout.mjs 第 8.f 组）：
+     *   1. 端点是空串 / null / 坏日期 → 该端**不限制**，解析为数据边界（from → 最早那天，
+     *      to → 最晚那天）。绝不产生 `NaN` / Invalid Date：`new Date('')` 得到的是
+     *      Invalid Date，再参与比较就全是 false，图会变成一片空白而不报错。
+     *   2. `from > to` 时**交换两端**，而不是退化成单天：用户把两端填反了，但那个窗口
+     *      本身是有意义的；退化成单天会静默丢掉一半数据。
+     *   3. 两端都夹进 [最早, 最晚]：手打 2030 年不会画出一张横跨几年的空格子图。
+     *   4. 返回值一律是 canonical `YYYY-MM-DD` 或 null（理由见 `dataBounds`）。
+     *   5. 数据里一条可用日期都没有时返回 `{from:null,to:null}`：没有边界可夹，
+     *      不能凭空造一个（也不能退到 1970）。
+     */
+    function clampRange(range, days) {
+      const bounds = dataBounds(days);
+      const source = isObject(range) ? range : {};
+      // 空串 / 缺失 / 坏日期一律 null：`parseDay('')` 已经是 null，这里不必特判空串。
+      let fromDate = parseDay(source.from);
+      let toDate = parseDay(source.to);
+      let clamped = false;
+
+      if (fromDate !== null && toDate !== null && fromDate.getTime() > toDate.getTime()) {
+        const swap = fromDate;
+        fromDate = toDate;
+        toDate = swap;
+        clamped = true;
+      }
+
+      if (bounds.minDate === null) {
+        // 没有可用的数据边界：两端都退化成"不限制"，而不是夹到某个凭空造出的日期。
+        if (fromDate !== null || toDate !== null) clamped = true;
+        return { from: null, to: null, clamped };
+      }
+
+      if (fromDate === null) { fromDate = bounds.minDate; clamped = true; }
+      else if (fromDate.getTime() < bounds.minDate.getTime()) { fromDate = bounds.minDate; clamped = true; }
+      else if (fromDate.getTime() > bounds.maxDate.getTime()) { fromDate = bounds.maxDate; clamped = true; }
+
+      if (toDate === null) { toDate = bounds.maxDate; clamped = true; }
+      else if (toDate.getTime() > bounds.maxDate.getTime()) { toDate = bounds.maxDate; clamped = true; }
+      else if (toDate.getTime() < bounds.minDate.getTime()) { toDate = bounds.minDate; clamped = true; }
+
+      return { from: dayKey(fromDate), to: dayKey(toDate), clamped };
+    }
+
+    /**
+     * 只留下落在 `range` 里（**闭区间**，两端当天都算）的那几天。
+     *
+     * 与 `normaliseTimeline` / `heatmapGeometry` 同一套容错口径：
+     *   - **不重排**：只过滤，保持宿主给的顺序。重排会掩盖宿主侧的顺序漂移，
+     *     而热力图自己按日期摆格子，并不依赖输入顺序；
+     *   - 没有可解析日期的条目直接丢掉（留着只会让几何里多出一格"未知日期"）；
+     *   - `null` / 非数组 / 坏 range 一律退化成"不限制"，不抛；
+     *   - 返回**同一批对象**（只过滤、不复制，与 `Array.prototype.filter` 一致），
+     *     调用方不必担心拿到的是副本。
+     *
+     * 内部先走一遍 `clampRange`：调用方忘了夹也不会画出数据范围之外的图。
+     * 夹取是幂等的（夹过的值再夹一次结果不变），所以多走一遍不花代价。
+     */
+    function filterTimeline(days, range) {
+      const list = Array.isArray(days) ? days : [];
+      const clamped = clampRange(range, list);
+      const fromDay = clamped.from === null ? null : parseDay(clamped.from);
+      const toDay = clamped.to === null ? null : parseDay(clamped.to);
+      const from = fromDay === null ? null : fromDay.getTime();
+      const to = toDay === null ? null : toDay.getTime();
+      const out = [];
+      for (const point of list) {
+        if (!isObject(point)) continue;
+        const date = parseDay(point.day);
+        if (date === null) continue;
+        const time = date.getTime();
+        if (from !== null && time < from) continue;
+        if (to !== null && time > to) continue;
+        out.push(point);
+      }
+      return out;
+    }
+
     /**
      * 环形图的段与其图例（按 `row.total / grandTotal` 分配）。
      *
@@ -804,6 +1035,103 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 热力图上方的区间控件：两个日期输入 + 三个预设（+ 一条"范围被收紧"的提示）。
+     *
+     * 为什么控件要自己画：热力图是"看哪几天断过"的图，而"看哪一段"是这张图固有的
+     * 自由度——跨一年的数据整段横滚才能看完，默认全画等于是把最该先看的那一段
+     * 藏在滚动条后面。
+     *
+     * 三个必须守住的行为（都有断言）：
+     *   1. **写回**：输入框的 value 永远等于真正画出来的范围。手打 2030 年会被
+     *      `clampRange` 夹到数据边界，并把夹过的值写回框里——否则框里显示 2030、
+     *      图上画着 2026，这是最容易出的静默错。框里的值还在下面**再夹一次**，
+     *      所以即使调用方绕过这里、把越界的原始串直接塞进 state，框里显示的也仍然是
+     *      真正画出来的范围（显示与实际不一致的可能性被从两处同时堵掉）。
+     *   2. **空串 = 该端不限制**：清空输入框时框里保持空白（画出来的范围从数据的
+     *      起点/终点算起）。写回一个凭空补出来的边界会让用户再也删不掉这一端；
+     *      而受控的 `<input type="date">` 在日期补全之前给的就是空串，每敲一下都写回
+     *      一个完整日期会把用户的输入打断。`clampRange` 仍然把"不限制"解析成数据
+     *      边界，所以**画出来的范围始终有界**——空串不是"没有范围"。
+     *   3. **提示只在"用户填的值被夹过"时出现**：清空输入框是合法操作，不该弹提示；
+     *      预设本身就在数据范围内，也不该弹。这个判定在写回的那一刻算好存进 state：
+     *      写回之后框里已经是夹过的值，事后再比就永远比不出差异了。
+     */
+    function heatControls(list, t, clamped, typed, onRangeChange) {
+      const emit = (next) => {
+        if (typeof onRangeChange !== 'function') return;
+        const resolved = clampRange(next, list);
+        const fromBlank = next.from === '';
+        const toBlank = next.to === '';
+        const written = {
+          from: fromBlank ? '' : resolved.from,
+          to: toBlank ? '' : resolved.to,
+        };
+        onRangeChange({
+          from: written.from,
+          to: written.to,
+          // "written !== next" 只可能来自夹取或换端（空串那两端已被排除）。
+          adjusted: resolved.clamped === true
+            && ((!fromBlank && written.from !== next.from) || (!toBlank && written.to !== next.to)),
+        });
+      };
+
+      /*
+       * 框里显示什么：空串保持空（= 该端不限制），其余一律显示**夹取后**的值。
+       * 用 clamped 而不是 typed 里的字符串，是为了不依赖"写回一定发生过"这个前提。
+       */
+      const shownFrom = typed !== null && typed.from === '' ? '' : (clamped.from ?? '');
+      const shownTo = typed !== null && typed.to === '' ? '' : (clamped.to ?? '');
+      const adjusted = typed !== null && typed.adjusted === true;
+
+      const dateInput = (end, value) => h('input', {
+        type: 'date',
+        className: 'stu-heatDate',
+        value,
+        // 两个相邻的日期输入没有可见文字，各给一个可读的名字（无障碍 + 便于自检定位）。
+        'aria-label': t(end === 'from' ? 'trendFrom' : 'trendTo'),
+        onChange: (event) => {
+          const raw = event === null || event === undefined ? undefined : event.target?.value;
+          const next = typeof raw === 'string' ? raw : '';
+          // 另一端取**框里当前显示的值**：这样"清空过的一端"保持不限制，
+          // 而"被夹过的另一端"不会因为这一次编辑又变回越界值。
+          emit(end === 'from' ? { from: next, to: shownTo } : { from: shownFrom, to: next });
+        },
+      });
+
+      return h('div', {
+        className: 'stu-heatControls',
+        // 供自检断言"夹取有没有发生"；界面上的解释由下面那句提示文字承担。
+        'data-range-clamped': adjusted ? 'true' : 'false',
+      },
+      h('span', { className: 'stu-heatRange' },
+        t('trendRange'),
+        dateInput('from', shownFrom),
+        h('span', null, '–'),
+        dateInput('to', shownTo)),
+      h('span', { className: 'stu-heatPresets' },
+        RANGE_PRESETS.map(([name, span, labelKey]) => {
+          /*
+           * 预设解析成**具体日期**再写回，而不是写 `{from:'',to:''}`：
+           * 「全部」若写成两端不限制，输入框会变成空白两块——用户刚点了「全部」，
+           * 框却空了，看起来像没生效。给数据真实的起止日期，用户接着还能手动收窄。
+           */
+          const target = clampRange(span > 0 ? defaultRange(list, span) : { from: '', to: '' }, list);
+          const active = clamped.from === target.from && clamped.to === target.to;
+          return h('button', {
+            key: name,
+            type: 'button',
+            className: 'stu-btn stu-btnSm',
+            'data-preset': name,
+            // 当前生效的预设：数据跨度比预设还短时会有两个预设同时命中
+            // （例如只有 3 天数据时"近 7 天"就是"全部"），这是事实而不是 bug。
+            'aria-pressed': active,
+            onClick: () => emit(target),
+          }, t(labelKey));
+        })),
+      adjusted ? h('span', { className: 'stu-heatHint' }, t('trendClamped')) : null);
+    }
+
+    /**
      * 按天热力图（GitHub 贡献图那种）。
      *
      * 为什么换成热力图而不是继续用折线：折线图的 X 轴必须**等距**（缺日在时间轴上
@@ -811,28 +1139,53 @@ window.__ModuleLoader__.load({
      * 断过"恰恰是看用量时第一个想知道的问题。热力图把每个自然日都占一个格子，
      * 缺日=底色格子，一眼就能看出来。
      *
-     * 三种降级，一种都不能抛：
+     * 相对上一版多了两件事：
+     *   - **区间**：默认只画**数据末尾往前 30 天**，上方给两个日期输入与三个预设；
+     *   - **自绘 tooltip**：原生 `title` 的样式由系统渲染、无法用 CSS 定制，真机反馈
+     *     "tooltip 样式和应用不一致"，所以换成自己画的浮层；格子保留 `aria-label`，
+     *     无障碍不退化，且**不再有 title**（两者并存会同时弹出两个）。
+     *
+     * 四种降级，一种都不能抛：
      *   - **没有 timeline**（`hasTrend` 为假）：整块不出现（调用方判，旧数据下页面
      *     回到原来的样子）；
      *   - **空数组 / 全是坏日期**：`heatmapGeometry` 给出 `days === 0`，这里走空态
      *     文案而不是画一个空网格——空网格和"这段时间用量是 0"长得一模一样，
      *     而两者含义相反；
-     *   - **只有一天**：照常画**一列**（周日起到周六 7 个格子，1 格有量、6 格补 0）。
-     *     这一点是真机数据逼出来的：宿主只给"有用量的天"，实测就可能是孤零零的一天。
+     *   - **区间里一天用量都没有**：同上走空态文案，但**控件必须留着**，
+     *     否则用户被锁在没有数据的区间里、连把范围改回去的入口都没有；
+     *   - **只有一天 / 只有一两列**：照常画**一列**（周日起到周六 7 个格子，1 格有量、
+     *     6 格补 0）。这一点是真机数据逼出来的：宿主只给"有用量的天"，
+     *     实测就可能是孤零零的一天，而区间收窄到 1~7 天时列数也只有 1~2 列。
+     *
+     * 参数用**选项对象**而不是继续加位置参数：区间与 tooltip 各是一对值 + 一对回调，
+     * 六个位置参数在调用处已经看不出谁是谁，将来再加一项还要改掉所有调用点。
      */
-    function renderHeatmap(points, t) {
+    function renderHeatmap(points, t, options) {
       const list = Array.isArray(points) ? points : [];
       if (list.length === 0) return null;
-      const geometry = heatmapGeometry(list);
+      const opts = isObject(options) ? options : {};
+      /*
+       * 用户输入的区间只以"两端字符串"的形式存在 state 里（空串 = 该端不限制），
+       * 真正画出来的范围每一帧由 clampRange 从数据推出来——派生值不进 state，
+       * 就不会出现"显示的范围"和"画出来的范围"两份真相。
+       */
+      const typed = isObject(opts.range) ? opts.range : null;
+      const clamped = clampRange(typed === null ? defaultRange(list) : typed, list);
+      const geometry = heatmapGeometry(filterTimeline(list, clamped));
+      const tip = isObject(opts.tip) ? opts.tip : null;
+      const onTipChange = typeof opts.onTipChange === 'function' ? opts.onTipChange : null;
+      const controls = heatControls(list, t, clamped, typed, opts.onRangeChange);
 
       const head = h('div', { className: 'stu-figureHead' }, t('chartTrend'));
 
-      // 一条可用记录都没有，或全部为 0：给一句文案，不画网格。
+      // 一条可用记录都没有，或全部为 0，或选中的区间里没有数据：给一句文案，不画网格。
       // 全 0 时所有格子都是 level 0，画出来就是 7×N 个同色方块——它表达的
       // "这段时间没有用量"用一句话说更清楚，也少 350 个无意义的 DOM 节点。
+      // 空态**包含区间控件**：范围是用户自己选的，改回去的入口不能在空态里消失。
       if (geometry.days === 0 || geometry.max <= 0) {
         return h('section', { className: 'stu-figure', key: 'heatmap' },
           head,
+          controls,
           h('div', { className: 'stu-heatEmpty' }, t('trendEmpty')));
       }
 
@@ -867,10 +1220,11 @@ window.__ModuleLoader__.load({
       /*
        * 星期标签：**只标奇数行**（周一/周三/周五）。
        * 七行全标在 11px 行高下会互相挤，标成 "Sun/Mon/Tue…" 反而更难对行；
-       * 隔行标已经足够让读者定位到具体是哪一天（配合格子的 title 给出完整日期）。
+       * 隔行标已经足够让读者定位到具体是哪一天（具体日期由格子的 aria-label
+       * 与自绘 tooltip 给出）。
        *
        * 这三个字**不进文案表**：它们是 3 个单字，中英两表各存一份只会让键集合
-       * 检查多两处需要同步的死键风险，而"标签的语义"完全由图例与 title 承载。
+       * 检查多两处需要同步的死键风险，而"标签的语义"完全由图例与 aria-label 承载。
        */
       const weekdayLabels = ['', '一', '', '三', '', '五', ''];
       const labelCells = [];
@@ -878,6 +1232,58 @@ window.__ModuleLoader__.load({
         labelCells.push(h('span', { className: 'stu-heatLabelCell', key: 'label-' + row },
           weekdayLabels[row]));
       }
+
+      /*
+       * tooltip 的坐标在**事件里**量，不在渲染时量。
+       *
+       * 坐标系是 `.stu-figure`（自己声明了 `position:relative`），用 `closest()` 找它，
+       * 所以不需要 ref，也不需要额外的 hook。
+       *
+       * 为什么不能挂在格子旁边：外层 `.stu-heatScroll` 是
+       * `overflow-x:auto; overflow-y:hidden`，绝对定位的子元素放进去一定被裁掉
+       * （`overflow-x:auto` 与 `overflow-y:visible` 不能共存）。浮层必须与滚动容器平级。
+       *
+       * 水平要**夹在容器内**：用常量 `TIP_HALF_WIDTH`（与 CSS 的 width:200px 同步）算
+       * 半个浮层宽当边界，否则最左/最右列的浮层会伸出图表边界。
+       * 垂直默认放在格子上方；上方放不下（第一行）就翻到下方，
+       * 免得盖住标题或跑到卡片外面去。
+       */
+      const tipAt = (cell, event) => {
+        const node = event === null || event === undefined ? null : event.currentTarget;
+        const host = node !== null && typeof node.closest === 'function' ? node.closest('.stu-figure') : null;
+        const cellBox = node !== null && typeof node.getBoundingClientRect === 'function'
+          ? node.getBoundingClientRect() : null;
+        const hostBox = host !== null && typeof host.getBoundingClientRect === 'function'
+          ? host.getBoundingClientRect() : null;
+        // 量不到（退化环境 / 合成事件）也要给出文本，只是位置退回容器左上角：绝不抛。
+        if (cellBox === null || hostBox === null) {
+          return { day: cell.day, total: cell.total, left: 0, top: 0, above: false };
+        }
+        const hostWidth = Number.isFinite(hostBox.width) && hostBox.width > 0
+          ? hostBox.width : Math.max(0, hostBox.right - hostBox.left);
+        const half = Math.max(0, Math.min(TIP_HALF_WIDTH, hostWidth / 2 - TIP_GAP));
+        const cellWidth = Number.isFinite(cellBox.width) ? cellBox.width : 0;
+        const centre = cellBox.left - hostBox.left + cellWidth / 2;
+        const low = Math.min(half, hostWidth / 2);
+        const high = Math.max(hostWidth - half, hostWidth / 2);
+        const left = Math.round(Math.min(Math.max(centre, low), high));
+        const topEdge = cellBox.top - hostBox.top;
+        const bottomEdge = Number.isFinite(cellBox.bottom) ? cellBox.bottom - hostBox.top : topEdge;
+        const above = topEdge - TIP_EST_HEIGHT - TIP_GAP >= 0;
+        const top = Math.round(above ? topEdge - TIP_GAP : bottomEdge + TIP_GAP);
+        // 矩形缺字段时上面的算术可能给出 NaN。NaN 不会抛，但会渲染成 `left:NaNpx`。
+        if (!Number.isFinite(left) || !Number.isFinite(top)) {
+          return { day: cell.day, total: cell.total, left: 0, top: 0, above: false };
+        }
+        return { day: cell.day, total: cell.total, left, top, above };
+      };
+      // hover 与键盘聚焦**共用同一套显示逻辑**：只有鼠标能读到"哪天多少"不算无障碍达标。
+      const showTip = (cell) => (event) => {
+        if (onTipChange !== null) onTipChange(tipAt(cell, event));
+      };
+      const hideTip = () => {
+        if (onTipChange !== null) onTipChange(null);
+      };
 
       const bodyCells = [];
       for (let column = 0; column < geometry.weeks.length; column += 1) {
@@ -890,9 +1296,22 @@ window.__ModuleLoader__.load({
           bodyCells.push(h('div', {
             className: 'stu-heatCell',
             key: cell.day,
+            // role=img 让 aria-label 在屏幕阅读器里真的被读出来（裸 div 的 aria-label 语义不定）。
+            role: 'img',
             'data-level': String(cell.level),
             style: { gridColumn: String(column + 1), gridRow: String(row + 1) },
-            title: fill(t('pointAria'), { day: cell.day, total: formatExact(cell.total) }),
+            /*
+             * 无障碍文本走 aria-label，**不再用原生 title**：
+             * title 的样式由系统渲染、无法用 CSS 定制（真机反馈"tooltip 样式不对"），
+             * 而它与自绘浮层并存会同时弹出两个 tooltip，所以只能二选一。
+             */
+            'aria-label': fill(t('pointAria'), { day: cell.day, total: formatExact(cell.total) }),
+            // 键盘可达：tabIndex + onFocus/onBlur 与 hover 同一套逻辑。
+            tabIndex: 0,
+            onMouseEnter: showTip(cell),
+            onMouseLeave: hideTip,
+            onFocus: showTip(cell),
+            onBlur: hideTip,
           }));
         }
       }
@@ -904,8 +1323,29 @@ window.__ModuleLoader__.load({
        */
       const layout = { '--stu-heat-weeks': String(geometry.columns) };
 
+      /*
+       * 自绘 tooltip 的节点。它必须是 `.stu-heatScroll` 的**兄弟**而不是子节点：
+       * 那个容器 `overflow-x:auto`（`overflow-y:visible` 会被算成 `auto`），
+       * 放进去的绝对定位浮层一定被裁掉。
+       *
+       * `aria-hidden`：无障碍文本已经由格子的 aria-label 承载，
+       * 这一层是纯视觉的，对辅助技术隐藏，免得同一句话被读两遍。
+       */
+      const tipNode = tip === null ? null : h('div', {
+        className: 'stu-heatTip',
+        'aria-hidden': 'true',
+        style: {
+          left: tip.left + 'px',
+          top: tip.top + 'px',
+          // above 为真时浮层贴在格子**上边**（translateY(-100%) 把自身高度翻上去），
+          // 否则贴在下边。位置由事件里的矩形算好，CSS 只负责对齐方式。
+          transform: tip.above === true ? 'translate(-50%,-100%)' : 'translate(-50%,0)',
+        },
+      }, fill(t('pointAria'), { day: tip.day, total: formatExact(tip.total) }));
+
       return h('section', { className: 'stu-figure', key: 'heatmap' },
         head,
+        controls,
         // 外层横向滚动：371 天（53 列）在窄侧栏里也放得下，且是"内容滚动"而不是
         // "格子压缩"。
         h('div', { className: 'stu-heatScroll' },
@@ -927,7 +1367,10 @@ window.__ModuleLoader__.load({
             h('i', { className: 'stu-heatCell', 'data-level': '2' }),
             h('i', { className: 'stu-heatCell', 'data-level': '3' }),
             h('i', { className: 'stu-heatCell', 'data-level': '4' })),
-          h('span', null, t('heatMore'))));
+          h('span', null, t('heatMore'))),
+        // 浮层放最后：它是绝对定位的，在 DOM 里靠后更方便调试时一眼看到，
+        // 与任何兄弟节点都没有布局关系。
+        tipNode);
     }
 
     /**
@@ -1077,6 +1520,20 @@ window.__ModuleLoader__.load({
       const [page, setPage] = React.useState(0);
       const [busy, setBusy] = React.useState(false);
       const [notice, setNotice] = React.useState(null);
+      /*
+       * 热力图的两个界面状态，位置必须在**语句层、任何 return 之前**：
+       * 条件调用会让两次渲染的 hook 数不同 → React #310 → 整个 slot 变空白
+       * （本仓库在定时任务插件上踩过一次）。
+       *
+       * `range` 只存**用户输入的两端字符串**（空串 = 该端不限制），`null` = 没碰过控件
+       * → 用默认窗口。真正画出来的范围每帧由 `clampRange` 从数据推出来：派生值不进
+       * state，就不会出现"显示的范围"和"画出来的范围"两份真相。
+       *
+       * `tip` 存当前 tooltip 的内容与坐标（`null` = 不显示）。坐标在事件里量，
+       * 这里只存结果——渲染期不测量 DOM，也就不会因为测量而多渲染一轮。
+       */
+      const [range, setRange] = React.useState(null);
+      const [tip, setTip] = React.useState(null);
 
       const load = React.useCallback(async () => {
         if (api === undefined || typeof api.describe !== 'function') {
@@ -1138,6 +1595,16 @@ window.__ModuleLoader__.load({
         }
       }, [api, t]);
 
+      /*
+       * 区间变化时顺手清掉 tooltip：换区间会整批换掉格子，旧的 tooltip 坐标随之失效，
+       * 留在屏幕上就成了一个悬在空处的浮层。`setRange` 与 `setTip` 的引用在组件
+       * 生命周期内稳定，所以这个回调只需建一次。
+       */
+      const onRangeChange = React.useCallback((next) => {
+        setRange(next);
+        setTip(null);
+      }, []);
+
       const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
       const safePage = Math.min(page, pageCount - 1);
       const slice = rows.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
@@ -1165,7 +1632,18 @@ window.__ModuleLoader__.load({
          */
         const donut = renderDonut(rows, t);
         if (donut !== null) body.push(donut);
-        if (hasTrend) body.push(renderHeatmap(trendPoints, t));
+        /*
+         * 热力图的区间与 tooltip 状态由页面持有（state 是 hook，只能在组件里），
+         * 但坐标系与交互全在热力图内部：传进去的是状态和两个 setter。
+         */
+        if (hasTrend) {
+          body.push(renderHeatmap(trendPoints, t, {
+            range,
+            onRangeChange,
+            tip,
+            onTipChange: setTip,
+          }));
+        }
         body.push(renderChart(rows, t));
         const head = h('thead', { key: 'thead' }, h('tr', null,
           h('th', { className: 'stu-nameCol' }, t('colModel')),
@@ -1510,6 +1988,17 @@ window.__ModuleLoader__.load({
       normaliseTimeline,
       shortDay,
       heatmapGeometry,
+      /*
+       * 区间的三个纯函数。它们的错误同样"不报错只撒谎"：
+       * 默认窗口锚错地方（锚到今天而不是数据末尾）会在陈旧数据上画一片空白；
+       * 夹取漏了会让手打 2030 年的人得到一张横跨几年的空格子图；
+       * 空串没被当成"不限制"则会算出 NaN 日期，图整个消失。只有把这三个函数取出来
+       * 跑真实输入（空数组 / 单天 / 跨度不足 30 天 / 超一年 / from>to / 空串 / 乱序）
+       * 才能钉住。
+       */
+      defaultRange,
+      clampRange,
+      filterTimeline,
       donutSegments,
       /*
        * 两个渲染函数也暴露出去。

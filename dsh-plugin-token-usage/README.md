@@ -32,7 +32,15 @@ the browser side cannot compute by itself.
   model — model, input, output, cache read, cache write, total and share — sorted by total
   descending, paginated at **20 rows per page**, with a **Refresh** button. Above the table sit
   two charts: a donut of the share by model, then a **per-day contribution heatmap** (one column
-  per week, one row per weekday, darker = more tokens that day).
+  per week, one row per weekday, darker = more tokens that day). The heatmap opens on the **last 30
+  days of the data** — anchored at the latest day *in the data*, not at today, because a stale
+  timeline would otherwise be rendered as a band of empty columns — and carries a date-range control:
+  two date inputs plus `Last 7 days` / `Last 30 days` / `All` presets. Whatever you type is **clamped
+  to the data's real span and written back into the input** (what the box shows is what the chart
+  draws); clearing an input means "no limit on that end". Hovering or focusing a cell shows a
+  **custom overlay** instead of the native `title` (the native tooltip's styling is rendered by the
+  OS and cannot be customised with CSS); the cell keeps its `aria-label`, so accessibility does not
+  regress.
 - **Real numbers only**: the counts come from the `usage` field on `assistant/message` events
   in the session log, exactly as the provider adapter reported it. The plugin **estimates
   nothing and computes no cost**.
@@ -225,7 +233,7 @@ again. If the profile cannot persist settings, the button is disabled and says s
 ```powershell
 node scripts/test-fold.mjs        # all passed: 81 assertions
 node scripts/test-summary.mjs     # all passed: 35 assertions
-node scripts/verify-layout.mjs    # all passed: 189 layout and structure assertions
+node scripts/verify-layout.mjs    # all passed: 260 layout and structure assertions
 node scripts/verify-contract.mjs  # all passed: 292 assembly-shape assertions
 ```
 
@@ -266,6 +274,15 @@ the columns must line up with calendar weeks (the grid starts on the Sunday of t
 day's week, so every cell's row equals its real `getDay()`), and the intensity must occupy
 four tiers of one hue (a negative control that collapses it to `total > 0 ? 4 : 0` turns the
 suite red).
+
+The date range is pinned the same way: the default window is anchored at the latest day **in the
+data** (a negative control that anchors it at today turns the suite red), a typed date is clamped to
+the data's real span and written back into the input, `from > to` swaps the two ends instead of
+collapsing to a single day, an empty input means "unbounded" rather than a `NaN` date, and a range
+with no usage keeps the range controls on screen so the empty state is never a dead end. The custom
+tooltip is pinned too: it must not live inside the horizontally scrolling container (which would clip
+it), cells must carry `aria-label` and **no** `title` (keeping both shows two tooltips at once), and
+its position is clamped inside the card.
 
 The suite covers the pure-function layer — the one both sides of the plugin rely on for
 arithmetic:

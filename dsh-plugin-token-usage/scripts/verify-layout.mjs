@@ -14,9 +14,17 @@
  *   8. 图表语义（把 client.js 用 React 桩跑起来，跑真实的纯函数：热力图列必须对齐到周、
  *      强度必须分四档、环形图分母是 grandTotal、缺 timeline / 单天 / 全零时的降级——
  *      这些错了都不报错，只是画出一张撒谎的图，正则看不见）。
+ *      其中 8.f / 8.g 两组是后加的两件事，同样只能靠"跑"：
+ *      - **日期区间**（默认窗口锚在数据末尾而不是今天、输入被夹到数据边界并写回输入框、
+ *        空串 = 该端不限制、from>to 交换、区间内无数据时空态保留控件）；
+ *      - **自绘 tooltip**（不能放进横向滚动容器里、格子上不能有原生 title 但必须有
+ *        aria-label、pointer-events:none、位置夹在卡片内、键盘可达）。
  *
  * 第 8 组是唯一会**执行**被检代码的一组，桩与 verify-contract.mjs 保持一致：
  * 同一份 client.js 被两个脚本用不同的桩跑，会让"这里过那里不过"变成常态。
+ * 桩把 `h()` 变成 `{type, props, children}`，所以除了按 className 找节点，
+ * 还能**直接调用**节点上存下来的事件处理函数——"接线有没有接上"就靠这个验证，
+ * 不必装 DOM。
  *
  * 与定时任务插件的差异：本插件的界面文案不在 locale/*.json 里，而是 client.js 内部的
  * `const zh = {...}` / `const en = {...}`；locale/*.json 只放插件卡片 meta 与给宿主用的键。
@@ -737,7 +745,7 @@ check(
   /'aria-label':\s*title/.test(source) && /fill\(t\('donutAria'\),\s*\{\s*total:/.test(source),
 );
 
-check('渲染了按天热力图（renderHeatmap 被调用）', /renderHeatmap\(trendPoints, t\)/.test(source));
+check('渲染了按天热力图（renderHeatmap 被调用）', /renderHeatmap\(trendPoints,\s*t,/.test(source));
 check(
   '热力图用 CSS grid 手绘（没有 SVG、没有图表库；格子必须在宽高上等比才是正方形）',
   /className:\s*'stu-heatBody'/.test(source)
@@ -754,9 +762,30 @@ check(
   '列数由数据算出并写进 CSS 变量（371 天 = 53 列，列数不能写死）',
   /'--stu-heat-weeks':\s*String\(geometry\.columns\)/.test(source),
 );
+/*
+ * 这条断言原来是「每格都带 title」。
+ *
+ * 真机反馈：原生 `title` 的样式由系统渲染、**无法用 CSS 定制**，与应用的设计语言
+ * 完全不一致，所以 tooltip 改成自绘。断言**不能只是删掉**——那样就丢了"只靠颜色
+ * 读不出具体哪天多少"的防回归能力，而且"删了 title 顺手把无障碍也删了"正是这类
+ * 改造最容易留下的洞。改成钉两件事：
+ *   1. 无障碍文本还在，内容仍然是 `pointAria`（日期 + 数值）；
+ *   2. 格子上**没有** title（两者并存会同时弹两个 tooltip）。
+ * title 的缺失在下面按**渲染出来的树**再断言一次（源码正则看不出运行时属性）。
+ */
 check(
-  '每格都带 title（复用 pointAria：日期 + 数值），只靠颜色读不出具体哪天多少',
-  /title:\s*fill\(t\('pointAria'\),\s*\{\s*day:\s*cell\.day,\s*total:\s*formatExact\(cell\.total\)\s*\}\)/.test(source),
+  '每格改带 aria-label（复用 pointAria：日期 + 数值），只靠颜色读不出具体哪天多少',
+  /'aria-label':\s*fill\(t\('pointAria'\),\s*\{\s*day:\s*cell\.day,\s*total:\s*formatExact\(cell\.total\)\s*\}\)/.test(source),
+);
+check(
+  '热力图格子上不再有 title（有它就会和自绘 tooltip 同时弹出：一个系统样式、一个应用样式）',
+  (() => {
+    const bodyStart = source.indexOf('const bodyCells = [];');
+    const bodyEnd = source.indexOf('const layout = {', bodyStart);
+    const region = bodyStart < 0 || bodyEnd < 0 ? '' : source.slice(bodyStart, bodyEnd);
+    return region.length > 0 && !/\btitle\s*:/.test(region);
+  })(),
+  '检查区间：`const bodyCells = []` .. `const layout = {`',
 );
 check(
   '每格带 data-level 供 CSS 上色（颜色不进 JS，档位与配色分家）',
@@ -826,14 +855,14 @@ check(
 );
 check(
   '没有 timeline 时整块热力图不出现（不是画一个空网格）',
-  /if \(hasTrend\) body\.push\(renderHeatmap\(trendPoints, t\)\)/.test(source)
+  /if \(hasTrend\) \{[\s\S]{0,120}?body\.push\(renderHeatmap\(trendPoints, t, \{/.test(source)
     && /timelinePresent:\s*timeline\.length > 0/.test(source),
 );
 check(
   '图表顺序：环形图 → 热力图 → 按模型构成（从整体到细节）',
   (() => {
     const donut = source.indexOf('body.push(donut)');
-    const trend = source.indexOf('body.push(renderHeatmap(trendPoints, t))');
+    const trend = source.indexOf('body.push(renderHeatmap(trendPoints, t, {');
     const composition = source.indexOf('body.push(renderChart(rows, t))');
     return donut > 0 && trend > donut && composition > trend;
   })(),
@@ -1516,11 +1545,25 @@ if (renderDonutFn !== null && renderHeatmapFn !== null) {
    * 免得调格子尺寸时图例忘同步），所以按类名在整个树里数会把 5 个图例色块算进来。
    */
   const gridCells = findByClass(findByClass(heatTree, /stu-heatBody/, [])[0] ?? [], /stu-heatCell/, []);
+  /*
+   * 这条原来是「每格都带 title」。
+   *
+   * 改成自绘 tooltip 之后，断言**不能只把 title 换成别的属性了事**——真正的回归
+   * 风险有两个，两个都要钉：
+   *   1. 删掉 title 时把**无障碍一起删了**（只靠颜色读不出哪天多少）；
+   *   2. 只加自绘浮层、**忘了删 title**，于是原生与自绘同时弹出两个 tooltip
+   *      （一个系统样式、一个应用样式），比原来更糟。
+   * 所以同一批格子上：aria-label 必须在，title 必须不在。
+   */
   check(
-    '每格都带 title（日期 + 数值；只靠颜色读不出具体哪天多少）',
+    '每格改带 aria-label（日期 + 数值；只靠颜色读不出具体哪天多少），且不再有 title',
     gridCells.length === 7
-      && gridCells.every((node) => typeof node.props.title === 'string' && node.props.title.includes('token')),
-    '网格格子 ' + gridCells.length + ' 个',
+      && gridCells.every((node) => typeof node.props['aria-label'] === 'string'
+        && node.props['aria-label'].includes('token'))
+      && gridCells.every((node) => node.props.title === undefined),
+    '网格格子 ' + gridCells.length
+      + ' 个；无 aria-label ' + gridCells.filter((node) => typeof node.props['aria-label'] !== 'string').length
+      + ' 个；仍带 title ' + gridCells.filter((node) => node.props.title !== undefined).length + ' 个',
   );
   check(
     '每格都带 data-level 0..4（CSS 靠它上色，颜色不进 JS）',
@@ -1562,6 +1605,8 @@ if (renderDonutFn !== null && renderHeatmapFn !== null) {
 
 /* ---- 8.e 新增文案键：中英一致、占位符一致、都不含裸含义 ---- */
 if (internals !== null && typeof internals.heatmapGeometry === 'function') {
+  /** 键的两种"被用到"：直接 `t('key')`，或作为字面量出现在别处（表驱动 / 三元）。 */
+  const isKeyUsed = (key) => referenced.has(key) || isLiteralUsed(key);
   // 文案表本身在第 5 组查；这里确认新键是"两处都有且真的被渲染用到"。
   for (const key of ['chartModels', 'chartTrend', 'chartComposition', 'donutAria', 'segmentAria',
     'donutCenter', 'trendEmpty', 'pointAria', 'heatLess', 'heatMore']) {
@@ -1572,7 +1617,594 @@ if (internals !== null && typeof internals.heatmapGeometry === 'function') {
         && referenced.has(key),
     );
   }
+  /*
+   * 区间控件的文案键是**间接引用**：两个日期输入的名字走三元
+   * （`t(end === 'from' ? 'trendFrom' : 'trendTo')`），三个预设的名字走表
+   * （`RANGE_PRESETS` 里的第三列）。所以这里放宽到"字面量出现过"，
+   * 而"真的渲染到界面上"由第 8.f 组按**渲染出来的树**断言（按钮文字 / aria-label 逐字比对）
+   * ——比正则更强：改了文案却忘了接线，那里会红。
+   */
+  for (const key of ['trendRange', 'trendFrom', 'trendTo', 'trendLast7', 'trendLast30', 'trendAll',
+    'trendClamped']) {
+    check(
+      '新增文案键 ' + key + ' 在中英两表都存在且被引用',
+      new RegExp('^\\s*' + key + '\\s*:', 'm').test(zhBody)
+        && new RegExp('^\\s*' + key + '\\s*:', 'm').test(enBody)
+        && isKeyUsed(key),
+    );
+  }
 }
+
+/* ---- 8.f 日期区间：默认近一个月 + 可夹取、可清空、可交换 ---- */
+
+/*
+ * 为什么这一组必须真跑代码：
+ *
+ * 区间的三种错法在界面上全都是"渲染成功的一张图"——
+ *   1. 默认窗口锚到**今天**而不是数据末尾：数据陈旧时右半边全是没有用量的空列，
+ *      看起来像图坏了，而不是像锚点错了；
+ *   2. **忘了夹取**：手打 2030 年就得到一张横跨好几年的空格子图，同样不报错；
+ *   3. 空串被当成日期：`new Date('')` → Invalid Date，比较全是 false，
+ *      于是"什么格子都没有"，与"这段没有用量"分不出来。
+ * 正则只能确认"有一段算区间的代码"，确认不了这些语义，所以取真函数跑真输入。
+ */
+const defaultRangeFn = need('defaultRange');
+const clampRangeFn = need('clampRange');
+const filterTimelineFn = need('filterTimeline');
+check(
+  '__internals 暴露区间纯函数（defaultRange / clampRange / filterTimeline）',
+  defaultRangeFn !== null && clampRangeFn !== null && filterTimelineFn !== null,
+);
+
+if (defaultRangeFn !== null && clampRangeFn !== null && filterTimelineFn !== null) {
+  /*
+   * 一份跨年、稀疏、且**结尾远离今天**的数据：只有这种数据能把"锚在数据末尾"
+   * 与"锚在今天"区分开——如果哪天真的变成今天，下面几条立刻红（负向对照 B）。
+   */
+  const longSpan = [
+    { day: '2025-12-01', total: 5 },
+    { day: '2026-01-05', total: 10 },
+    { day: '2026-06-10', total: 20 },
+    { day: '2026-12-20', total: 30 },
+  ];
+  const daysOf = (points) => points.map((point) => point.day).join(',');
+  const fallback = { from: null, to: null };
+  const sameRange = (range, from, to) => range.from === from && range.to === to;
+
+  /* ---- 默认窗口：近一个月，锚在数据末尾 ---- */
+  const def = defaultRangeFn(longSpan);
+  check(
+    '默认窗口是"数据最晚那天往前 30 天（含首尾）"：2026-12-20 → 2026-11-21',
+    sameRange(def, '2026-11-21', '2026-12-20'),
+    JSON.stringify(def),
+  );
+  check(
+    '默认窗口锚在**数据末尾**而不是今天（窗口右端就是数据最晚那天）',
+    def.to === '2026-12-20',
+    'to=' + def.to + '，今天=' + new Date().toISOString().slice(0, 10),
+  );
+  check(
+    '默认窗口只覆盖最近 30 天：半年前的 2026-06-10 不在窗口里（否则等于没默认）',
+    daysOf(filterTimelineFn(longSpan, def)) === '2026-12-20',
+    daysOf(filterTimelineFn(longSpan, def)),
+  );
+  check(
+    '窗口两端都落在数据边界内：不早于最早那天、不晚于最晚那天',
+    filterTimelineFn(longSpan, def).length > 0
+      && def.from >= '2025-12-01' && def.to <= '2026-12-20',
+    JSON.stringify(def),
+  );
+
+  const shortSpan = [{ day: '2026-06-01', total: 1 }, { day: '2026-06-03', total: 9 }];
+  check(
+    '跨度不足 30 天时用**实际跨度**，不补出无数据的空列（起点就是最早那天）',
+    sameRange(defaultRangeFn(shortSpan), '2026-06-01', '2026-06-03'),
+    JSON.stringify(defaultRangeFn(shortSpan)),
+  );
+  check(
+    '单天时窗口是那一天（from === to），不是一个 30 天的空窗',
+    sameRange(defaultRangeFn([{ day: '2026-06-05', total: 42 }]), '2026-06-05', '2026-06-05'),
+    JSON.stringify(defaultRangeFn([{ day: '2026-06-05', total: 42 }])),
+  );
+  check(
+    '默认窗口对 空数组 / null / undefined / 全是坏 day 都返回"不限制"且不抛',
+    [defaultRangeFn([]), defaultRangeFn(null), defaultRangeFn(undefined),
+      defaultRangeFn([{ day: 'unknown' }, { total: 1 }, null, 'x', { day: '' }])]
+      .every((range) => sameRange(range, null, null)),
+  );
+  check(
+    'defaultRange 是纯函数：不改动输入数组、重复调用结果相同',
+    (() => {
+      const snapshot = JSON.stringify(longSpan);
+      const again = defaultRangeFn(longSpan);
+      return JSON.stringify(longSpan) === snapshot && sameRange(again, def.from, def.to);
+    })(),
+  );
+  check(
+    '默认窗口的天数可以被显式覆盖（预设"近 7 天"与它同一套锚点）',
+    sameRange(defaultRangeFn(longSpan, 7), '2026-12-14', '2026-12-20'),
+    JSON.stringify(defaultRangeFn(longSpan, 7)),
+  );
+
+  /* ---- 夹取 ---- */
+  check(
+    '手打 2030 年（远超数据）被夹到数据最晚那天：两端都落到 2026-12-20，不产生跨年的空格子图',
+    (() => {
+      const range = clampRangeFn({ from: '2030-01-01', to: '2030-12-31' }, longSpan);
+      return sameRange(range, '2026-12-20', '2026-12-20') && range.clamped === true;
+    })(),
+    JSON.stringify(clampRangeFn({ from: '2030-01-01', to: '2030-12-31' }, longSpan)),
+  );
+  check(
+    '手打 2020 年之前（远早于数据）被夹到数据最早那天',
+    (() => {
+      const range = clampRangeFn({ from: '2020-01-01', to: '2027-01-01' }, longSpan);
+      return sameRange(range, '2025-12-01', '2026-12-20') && range.clamped === true;
+    })(),
+    JSON.stringify(clampRangeFn({ from: '2020-01-01', to: '2027-01-01' }, longSpan)),
+  );
+  check(
+    '范围内的输入原样返回（clamped 不是"永远为真"的摆设）',
+    (() => {
+      const range = clampRangeFn({ from: '2026-06-10', to: '2026-12-20' }, longSpan);
+      return sameRange(range, '2026-06-10', '2026-12-20') && range.clamped === false;
+    })(),
+    JSON.stringify(clampRangeFn({ from: '2026-06-10', to: '2026-12-20' }, longSpan)),
+  );
+  check(
+    'from > to 时**交换两端**（不退化成单天：窗口本身有意义，丢一半数据是静默错）',
+    (() => {
+      const range = clampRangeFn({ from: '2026-06-10', to: '2026-01-05' }, longSpan);
+      return sameRange(range, '2026-01-05', '2026-06-10') && range.clamped === true;
+    })(),
+    JSON.stringify(clampRangeFn({ from: '2026-06-10', to: '2026-01-05' }, longSpan)),
+  );
+  check(
+    '交换之后仍按数据边界夹取（填反 + 越界同时发生也不会漏夹）',
+    (() => {
+      const range = clampRangeFn({ from: '2030-01-01', to: '2020-01-01' }, longSpan);
+      return sameRange(range, '2025-12-01', '2026-12-20') && range.clamped === true;
+    })(),
+    JSON.stringify(clampRangeFn({ from: '2030-01-01', to: '2020-01-01' }, longSpan)),
+  );
+  check(
+    '清空某一端（空串）退化成"该端不限制"：解析为数据边界，而不是 NaN / Invalid Date',
+    (() => {
+      const range = clampRangeFn({ from: '', to: '2026-06-10' }, longSpan);
+      return sameRange(range, '2025-12-01', '2026-06-10') && range.clamped === true;
+    })(),
+    JSON.stringify(clampRangeFn({ from: '', to: '2026-06-10' }, longSpan)),
+  );
+  check(
+    '两端都清空 = 全部：解析成数据的真实跨度',
+    (() => {
+      const range = clampRangeFn({ from: '', to: '' }, longSpan);
+      return sameRange(range, '2025-12-01', '2026-12-20') && range.clamped === true;
+    })(),
+    JSON.stringify(clampRangeFn({ from: '', to: '' }, longSpan)),
+  );
+  check(
+    '坏字符串 / null / 缺字段 / 非对象 range 都走"该端不限制"，不抛',
+    (() => {
+      const full = clampRangeFn({ from: 'not-a-date', to: null }, longSpan);
+      const half = clampRangeFn({ from: undefined, to: '2026-06-10' }, longSpan);
+      const empty = clampRangeFn({}, longSpan);
+      const nil = clampRangeFn(null, longSpan);
+      const junk = clampRangeFn('x', longSpan);
+      return full.from === '2025-12-01' && full.to === '2026-12-20' && full.clamped === true
+        // 坏的一端不限制 → 数据起点；好的一端原样保留。
+        && half.from === '2025-12-01' && half.to === '2026-06-10'
+        && ['from', 'to'].every((end) => empty[end] === nil[end] && nil[end] === junk[end] && empty[end] !== null);
+    })(),
+    JSON.stringify([
+      clampRangeFn({ from: 'not-a-date', to: null }, longSpan),
+      clampRangeFn({ from: undefined, to: '2026-06-10' }, longSpan),
+      clampRangeFn({}, longSpan), clampRangeFn(null, longSpan), clampRangeFn('x', longSpan),
+    ]),
+  );
+  check(
+    '返回值一律是补零的 YYYY-MM-DD（<input type="date"> 只认这种形式，否则框里显示空白）',
+    (() => {
+      const range = clampRangeFn({ from: '2026-1-5', to: '2026-6-9' }, longSpan);
+      return sameRange(range, '2026-01-05', '2026-06-09') && range.clamped === false;
+    })(),
+    JSON.stringify(clampRangeFn({ from: '2026-1-5', to: '2026-6-9' }, longSpan)),
+  );
+  check(
+    '数据里一条可用日期都没有时不凭空造边界：返回不限制',
+    (() => {
+      const range = clampRangeFn({ from: '2026-01-01', to: '2026-02-01' }, []);
+      return sameRange(range, null, null) && range.clamped === true
+        && sameRange(clampRangeFn(null, []), null, null)
+        && clampRangeFn(null, []).clamped === false;
+    })(),
+  );
+  check(
+    '对冻结的只读输入也不抛（不写回参数）',
+    (() => {
+      const frozen = Object.freeze({ from: '2030-01-01', to: '2029-01-01' });
+      const range = clampRangeFn(frozen, longSpan);
+      return sameRange(range, '2026-12-20', '2026-12-20') && frozen.from === '2030-01-01';
+    })(),
+  );
+
+  /* ---- 过滤 ---- */
+  check(
+    'filterTimeline 只留区间内的天（闭区间，两端当天都算）',
+    (() => {
+      const inRange = daysOf(filterTimelineFn(longSpan, { from: '2026-01-01', to: '2026-06-30' }));
+      const bothEnds = daysOf(filterTimelineFn(longSpan, { from: '2026-06-10', to: '2026-12-20' }));
+      return inRange === '2026-01-05,2026-06-10' && bothEnds === '2026-06-10,2026-12-20';
+    })(),
+    daysOf(filterTimelineFn(longSpan, { from: '2026-01-01', to: '2026-06-30' })),
+  );
+  check(
+    '区间里一天用量都没有时返回空数组（渲染层据此走空态，而不是画空网格）',
+    filterTimelineFn(longSpan, { from: '2026-03-01', to: '2026-03-31' }).length === 0,
+  );
+  check(
+    'filterTimeline 不重排：乱序输入按原顺序留下命中的那些（重排会掩盖宿主侧顺序漂移）',
+    daysOf(filterTimelineFn([longSpan[3], longSpan[1], longSpan[0]],
+      { from: '2025-12-01', to: '2026-06-30' })) === '2026-01-05,2025-12-01',
+  );
+  check(
+    'filterTimeline 丢掉没有可解析日期的条目（坏 day / 缺 day / null 条目）',
+    daysOf(filterTimelineFn([{ day: 'unknown' }, { day: '' }, { total: 1 }, null, { day: '2026-01-05', total: 1 }], null))
+      === '2026-01-05',
+  );
+  check(
+    'filterTimeline 对 null / undefined / 非数组 days 返回空数组，不抛',
+    filterTimelineFn(null, null).length === 0 && filterTimelineFn(undefined, fallback).length === 0,
+  );
+  check(
+    'filterTimeline 内部自带夹取：调用方给越界的 range 也拿不到数据范围之外的天',
+    daysOf(filterTimelineFn(longSpan, { from: '2030-01-01', to: '2030-12-31' })) === '2026-12-20',
+  );
+  check(
+    'filterTimeline 返回同一批对象（只过滤不复制，与 Array.prototype.filter 一致）',
+    (() => {
+      const kept = filterTimelineFn(longSpan, { from: '2026-01-01', to: '2026-06-30' });
+      return kept.length === 2 && kept[0] === longSpan[1] && kept[1] === longSpan[2];
+    })(),
+  );
+  check(
+    '三个函数串起来：默认窗口 → 过滤 → 几何，列数与"只有末尾那天"一致',
+    (() => {
+      const geometry = heatmapGeometryFn(filterTimelineFn(longSpan, defaultRangeFn(longSpan)));
+      return geometry.days === 1 && geometry.from === '2026-12-20' && geometry.columns === 1;
+    })(),
+  );
+}
+
+/* ---- 8.f 区间控件与自绘 tooltip 的接线（在渲染出来的树上查） ---- */
+
+/*
+ * 这一组同样要看**渲染结果**：区间控件的三个预设、夹取后的写回、tooltip 的定位
+ * 与"不在滚动容器里"，都是"接错了也照样渲染成功"的东西。桩把 h() 变成
+ * `{type, props, children}`，所以既能按 className 找节点，也能**直接调用**桩里存下来的
+ * 事件处理函数——不用装 DOM 就能验证交互（这是"接线有没有接上"唯一便宜的验证方式）。
+ */
+if (renderHeatmapFn !== null && typeof internals.defaultRange === 'function') {
+  const findClass = (node, pattern) => findByClass(node, pattern, []);
+  const longSpan = [
+    { day: '2025-12-01', total: 5 },
+    { day: '2026-01-05', total: 10 },
+    { day: '2026-06-10', total: 20 },
+    { day: '2026-12-20', total: 30 },
+  ];
+  const rangeInputs = (tree) => findClass(tree, /stu-heatDate/);
+  const presets = (tree) => findClass(tree, /stu-btn/)
+    .filter((node) => typeof node.props?.['data-preset'] === 'string');
+  const presetOf = (tree, name) => presets(tree).find((node) => node.props['data-preset'] === name);
+  const clampFlag = (tree) => findClass(tree, /stu-heatControls/)[0]?.props['data-range-clamped'];
+
+  /* ---- 控件本身 ---- */
+  const controlsTree = renderHeatmapFn(longSpan, tFor, { range: null, onRangeChange: () => {} });
+  check(
+    '热力图上方有区间控件（日期输入 + 预设按钮），且控件在滚动容器之外',
+    findClass(controlsTree, /stu-heatControls/).length === 1
+      && findClass(findClass(controlsTree, /stu-heatScroll/)[0] ?? {}, /stu-heatControls/).length === 0,
+  );
+  check(
+    '两个日期输入（type=date）+ 三个预设（last7 / last30 / all），各带可读名字',
+    rangeInputs(controlsTree).length === 2
+      && rangeInputs(controlsTree).every((node) => node.type === 'input' && node.props.type === 'date')
+      && rangeInputs(controlsTree)[0].props['aria-label'] === valueOf(zhBody, 'trendFrom')
+      && rangeInputs(controlsTree)[1].props['aria-label'] === valueOf(zhBody, 'trendTo')
+      && presets(controlsTree).map((node) => node.props['data-preset']).join(',') === 'last7,last30,all',
+    JSON.stringify(rangeInputs(controlsTree).map((node) => node.props['aria-label'])),
+  );
+  /*
+   * 文案是**间接引用**的（三元 + 预设表），所以在这里逐字比对渲染出来的文字：
+   * 键改了、表改了、接线断了，任何一种都会红。比 `t('key')` 的正则更接近"用户看不看得到"。
+   */
+  check(
+    '控件上的文案真的来自文案表：范围标签、三个预设按钮、以及起始/结束的名字',
+    (() => {
+      const textOf = (node) => (node?.children ?? []).filter((child) => typeof child === 'string').join('');
+      const label = findClass(controlsTree, /stu-heatRange/)[0];
+      return textOf(label).startsWith(valueOf(zhBody, 'trendRange'))
+        && presets(controlsTree).map(textOf).join(',')
+          === [valueOf(zhBody, 'trendLast7'), valueOf(zhBody, 'trendLast30'), valueOf(zhBody, 'trendAll')].join(',');
+    })(),
+    JSON.stringify(presets(controlsTree).map((node) => (node.children ?? []).join(''))),
+  );
+  check(
+    '没碰过控件时，框里显示的是默认窗口（数据末尾往前 30 天），即"写回"对默认值也成立',
+    rangeInputs(controlsTree).map((node) => node.props.value).join(',') === '2026-11-21,2026-12-20',
+    JSON.stringify(rangeInputs(controlsTree).map((node) => node.props.value)),
+  );
+  check(
+    '默认窗口下"近 30 天"预设是按下状态，另两个不是（当前生效的区间要看得出来）',
+    presetOf(controlsTree, 'last30')?.props['aria-pressed'] === true
+      && presetOf(controlsTree, 'last7')?.props['aria-pressed'] === false
+      && presetOf(controlsTree, 'all')?.props['aria-pressed'] === false,
+  );
+
+  /* ---- 输入：夹取 + 写回 ---- */
+  let emitted = null;
+  const tree0 = renderHeatmapFn(longSpan, tFor, { range: null, onRangeChange: (next) => { emitted = next; } });
+  rangeInputs(tree0)[0].props.onChange({ target: { value: '2030-01-01' } });
+  check(
+    '手打 2030 年：写回输入框的是**夹过的**值（框里显示的必须等于画出来的）',
+    emitted !== null && emitted.from === '2026-12-20' && emitted.to === '2026-12-20'
+      && emitted.adjusted === true,
+    JSON.stringify(emitted),
+  );
+  const wroteBack = renderHeatmapFn(longSpan, tFor, { range: emitted, onRangeChange: () => {} });
+  check(
+    '夹过的值渲染到框里就是 2026-12-20（不是原始输入 2030-01-01）',
+    rangeInputs(wroteBack).map((node) => node.props.value).join(',') === '2026-12-20,2026-12-20',
+    JSON.stringify(rangeInputs(wroteBack).map((node) => node.props.value)),
+  );
+  check(
+    '被夹取时给出一句文字提示（原生 title 正是这次要摆脱的东西，所以提示做成可见文字）',
+    clampFlag(wroteBack) === 'true'
+      && findClass(wroteBack, /stu-heatHint/)[0]?.children?.[0] === valueOf(zhBody, 'trendClamped')
+      && findClass(controlsTree, /stu-heatHint/).length === 0,
+  );
+  check(
+    '清空某一端：写回空串（"该端不限制"）而不是补一个边界，也不弹提示',
+    (() => {
+      let cleared = null;
+      const tree = renderHeatmapFn(longSpan, tFor, { range: null, onRangeChange: (next) => { cleared = next; } });
+      rangeInputs(tree)[0].props.onChange({ target: { value: '' } });
+      if (cleared === null || cleared.from !== '' || cleared.adjusted !== false) return false;
+      const shown = renderHeatmapFn(longSpan, tFor, { range: cleared, onRangeChange: () => {} });
+      // 框里空着（= 不限制），而画出来的范围从数据起点算起：两端都不可为空。
+      return rangeInputs(shown)[0].props.value === ''
+        && findClass(shown, /stu-heatInner/)[0].props.style['--stu-heat-weeks'] === '56';
+    })(),
+    '56 列 = 2025-12-01 那一周 .. 2026-12-20 那一周（不限制的一端按数据边界画）',
+  );
+  check(
+    'from > to：写回的是**交换后**的区间（不是单天、也不是空白）',
+    (() => {
+      let next = null;
+      const tree = renderHeatmapFn(longSpan, tFor, { range: null, onRangeChange: (value) => { next = value; } });
+      // 先把 from 设成 2026-06-10（另一端此时显示默认的 2026-12-20）
+      rangeInputs(tree)[0].props.onChange({ target: { value: '2026-06-10' } });
+      const first = next;
+      const tree2 = renderHeatmapFn(longSpan, tFor, { range: first, onRangeChange: (value) => { next = value; } });
+      // 再把 to 设成 2026-01-05：from=06-10 > to=01-05，必须交换
+      rangeInputs(tree2)[1].props.onChange({ target: { value: '2026-01-05' } });
+      return next.from === '2026-01-05' && next.to === '2026-06-10' && next.adjusted === true;
+    })(),
+  );
+  check(
+    '预设按钮把**具体日期**写回（不是空的 from/to），且不弹"被收紧"提示',
+    (() => {
+      let next = null;
+      const tree = renderHeatmapFn(longSpan, tFor, { range: null, onRangeChange: (value) => { next = value; } });
+      presetOf(tree, 'last7').props.onClick();
+      const last7 = next;
+      presetOf(tree, 'all').props.onClick();
+      const all = next;
+      return last7.from === '2026-12-14' && last7.to === '2026-12-20' && last7.adjusted === false
+        && all.from === '2025-12-01' && all.to === '2026-12-20' && all.adjusted === false;
+    })(),
+  );
+  check(
+    '没有 onRangeChange 时（离线渲染 / 旧调用点）控件照常渲染且点它不抛',
+    (() => {
+      const tree = renderHeatmapFn(longSpan, tFor, { range: null });
+      rangeInputs(tree)[0].props.onChange({ target: { value: '2030-01-01' } });
+      presetOf(tree, 'all').props.onClick();
+      rangeInputs(tree)[1].props.onChange({});
+      return rangeInputs(tree).length === 2;
+    })(),
+  );
+  check(
+    '短跨度（1~7 天）只有 1~2 列，仍然正常渲染：列数写进 CSS 变量且 ≥ 1，不塌也不除零',
+    (() => {
+      const six = renderHeatmapFn([{ day: '2026-06-01', total: 5 }, { day: '2026-06-06', total: 9 }], tFor,
+        { range: { from: '2026-06-01', to: '2026-06-06' } });
+      const seven = renderHeatmapFn([{ day: '2026-06-01', total: 5 }, { day: '2026-06-07', total: 9 }], tFor,
+        { range: { from: '2026-06-01', to: '2026-06-07' } });
+      const weeksOf = (tree) => findClass(tree, /stu-heatInner/)[0].props.style['--stu-heat-weeks'];
+      const cellsOf = (tree) => findClass(findClass(tree, /stu-heatBody/)[0] ?? {}, /stu-heatCell/);
+      return weeksOf(six) === '1' && weeksOf(seven) === '2'
+        && cellsOf(six).length === 7 && cellsOf(seven).length === 14
+        && cellsOf(seven).every((node) => ['0', '1', '2', '3', '4'].includes(node.props['data-level']))
+        && !findClass(seven, /stu-heatEmpty/).length;
+    })(),
+  );
+  check(
+    '区间里没有数据时走空态文案，但**控件留在原地**（否则用户被锁在空区间里出不来）',
+    (() => {
+      const empty = renderHeatmapFn(longSpan, tFor, { range: { from: '2026-03-01', to: '2026-03-31' }, onRangeChange: () => {} });
+      return findClass(empty, /stu-heatEmpty/).length === 1
+        && findClass(empty, /stu-heatControls/).length === 1
+        && rangeInputs(empty).map((node) => node.props.value).join(',') === '2026-03-01,2026-03-31'
+        && findClass(empty, /stu-heatBody/).length === 0
+        && findClass(empty, /stu-heatTip/).length === 0;
+    })(),
+  );
+  check(
+    '区间控件本身也只走主题令牌（浅色/深色主题下都读得出来）',
+    /\.stu-heatDate\{[^}]*background:var\(--dsw-alias-bg-layer-2\)/.test(cssBlock)
+      && /\.stu-heatDate\{[^}]*border:\.5px solid var\(--dsw-alias-border-l2\)/.test(cssBlock)
+      && /\.stu-heatDate\{[^}]*color:var\(--dsw-alias-label-primary\)/.test(cssBlock)
+      && /\.stu-heatControls\{[^}]*flex-wrap:wrap/.test(cssBlock),
+  );
+}
+
+/* ---- 8.g 自绘 tooltip：不在滚动容器里、可定位、可夹取、键盘可达 ---- */
+
+/*
+ * 真机反馈：热力图的 hover 提示原来是原生 `title`，样式由系统渲染、**无法用 CSS
+ * 定制**，与应用的设计语言不一致。改成自绘浮层之后，有四类错误**不会报错、只是看起来
+ * 偶尔不对**，所以逐条钉：
+ *   1. 浮层放进了 `.stu-heatScroll`（`overflow-x:auto` 会把它裁掉）——在真机上表现是
+ *      "tooltip 只有一部分可见"，很容易被当成样式问题；
+ *   2. 只加浮层、忘了删 `title` → 同时弹两个；
+ *   3. 忘了 `pointer-events:none` → 浮层盖住相邻格子，mouseleave/mouseenter 互相触发，
+ *      提示疯狂闪烁（而且被盖住的格子永远 hover 不到）；
+ *   4. 定位不做水平夹取 → 最左/最右列的浮层伸出图表边界。
+ */
+if (renderHeatmapFn !== null && typeof internals.defaultRange === 'function') {
+  const findClass = (node, pattern) => findByClass(node, pattern, []);
+  const points = [
+    { day: '2026-06-01', total: 10 },
+    { day: '2026-06-02', total: 1547482736 },
+    { day: '2026-06-03', total: 20 },
+  ];
+  const tipTree = renderHeatmapFn(points, tFor, {
+    range: null,
+    tip: { day: '2026-06-02', total: 1547482736, left: 120, top: 40, above: true },
+  });
+  const scrollNode = findClass(tipTree, /stu-heatScroll/)[0] ?? {};
+  const tips = findClass(tipTree, /stu-heatTip/);
+  check(
+    '有 tip 状态时渲染出一个浮层，且它在 `.stu-heatScroll` 之外（在里面一定被裁）',
+    tips.length === 1 && findClass(scrollNode, /stu-heatTip/).length === 0
+      && findClass(tipTree, /stu-figure/)[0] !== undefined,
+  );
+  check(
+    '浮层文本用 pointAria 展开（日期 + 真实 token 数），不是"某天多少"的占位符',
+    (() => {
+      const text = (tips[0]?.children ?? []).filter((child) => typeof child === 'string').join('');
+      return text.includes('2026-06-02') && text.includes('1,547,482,736') && text.includes('token');
+    })(),
+    JSON.stringify(tips[0]?.children),
+  );
+  check(
+    '浮层位置来自状态（事件里量出来的 left/top）且用 transform 决定贴上方还是下方',
+    (() => {
+      const style = tips[0]?.props?.style ?? {};
+      return style.left === '120px' && style.top === '40px'
+        && style.transform === 'translate(-50%,-100%)';
+    })(),
+    JSON.stringify(tips[0]?.props?.style),
+  );
+  check(
+    '没有 tip 状态时不渲染浮层（它是绝对定位的，留在 DOM 里会挡在图上）',
+    findClass(renderHeatmapFn(points, tFor, { range: null, tip: null }), /stu-heatTip/).length === 0
+      && findClass(renderHeatmapFn(points, tFor), /stu-heatTip/).length === 0,
+  );
+  check(
+    '浮层对辅助技术隐藏（无障碍文本由格子的 aria-label 承载，同一句话不读两遍）',
+    tips[0]?.props?.['aria-hidden'] === 'true',
+  );
+  check(
+    '浮层样式带 pointer-events:none（漏了它会形成"盖住格子 → mouseleave → 消失 → 又 mouseenter"的抖动循环）',
+    /\.stu-heatTip\{[^}]*pointer-events:none/.test(cssBlock),
+  );
+  check(
+    '浮层宽度写死并与夹取用的半个宽度常量对应（宽度由内容决定就算不准边界）',
+    /\.stu-heatTip\{[^}]*width:200px/.test(cssBlock)
+      && /const TIP_HALF_WIDTH = 100;/.test(source)
+      && /\.stu-heatTip\{[^}]*max-width:calc\(100% - 8px\)/.test(cssBlock),
+  );
+  check(
+    '浮层的定位祖先是图表卡片本身（`.stu-figure` 声明 position:relative），与滚动容器平级',
+    /\.stu-figure\{[^}]*position:relative/.test(cssBlock)
+      && /closest\('\.stu-figure'\)/.test(source),
+  );
+  check(
+    '浮层只用主题令牌上色（背景 bg-overlay / 文字 label-primary / 描边 border-l1）',
+    /\.stu-heatTip\{[^}]*background:var\(--dsw-alias-bg-overlay\)/.test(cssBlock)
+      && /\.stu-heatTip\{[^}]*color:var\(--dsw-alias-label-primary\)/.test(cssBlock)
+      && /\.stu-heatTip\{[^}]*border:\.5px solid var\(--dsw-alias-border-l1\)/.test(cssBlock),
+  );
+
+  /* ---- 交互：hover / focus 共用一套逻辑，位置被夹在容器内 ---- */
+  const rectOf = (left, top, width, height) => ({
+    left, top, width, height, right: left + width, bottom: top + height,
+  });
+  const fakeNode = (cellRect, hostRect) => ({
+    getBoundingClientRect: () => cellRect,
+    closest: () => ({ getBoundingClientRect: () => hostRect }),
+  });
+  const host = rectOf(0, 40, 600, 200);
+  const gridCells = findClass(findClass(tipTree, /stu-heatBody/)[0] ?? {}, /stu-heatCell/);
+  const emittedTips = [];
+  const liveTree = renderHeatmapFn(points, tFor, { range: null, onTipChange: (next) => emittedTips.push(next) });
+  const liveCell = findClass(findClass(liveTree, /stu-heatBody/)[0] ?? {}, /stu-heatCell/)[0];
+  liveCell.props.onMouseEnter({ currentTarget: fakeNode(rectOf(0, 100, 11, 11), host) });
+  liveCell.props.onFocus({ currentTarget: fakeNode(rectOf(589, 100, 11, 11), host) });
+  liveCell.props.onFocus({ currentTarget: fakeNode(rectOf(300, 45, 11, 11), host) });
+  liveCell.props.onFocus({ currentTarget: fakeNode(rectOf(300, 100, 11, 11), rectOf(0, 0, 120, 200)) });
+  liveCell.props.onBlur({});
+  const [leftEdge, rightEdge, topRow, narrow, afterBlur] = emittedTips;
+  check(
+    'hover 与键盘聚焦给的是同一份 tooltip（内容 + 坐标一致，不是两套逻辑）',
+    emittedTips.length === 5
+      && leftEdge.day === rightEdge.day && leftEdge.total === rightEdge.total
+      && leftEdge.above === rightEdge.above,
+  );
+  check(
+    '最左列的浮层被夹在容器内（左边界 ≥ 半个宽度），不伸出图表左边',
+    leftEdge.left === 100 && leftEdge.above === true && leftEdge.top === 56,
+    JSON.stringify(leftEdge),
+  );
+  check(
+    '最右列的浮层被夹在容器内（右边界 ≤ 容器宽 − 半个宽度），不伸出图表右边',
+    rightEdge.left === 500,
+    JSON.stringify(rightEdge),
+  );
+  check(
+    '第一行的浮层翻到格子**下方**（上方放不下就翻，免得盖住标题或跑出卡片）',
+    topRow.above === false && topRow.top === 20,
+    JSON.stringify(topRow),
+  );
+  check(
+    '容器比浮层还窄时两端边界仍然成立（极窄侧栏下不出现越界）',
+    narrow.left >= 0 && narrow.left <= 120,
+    JSON.stringify(narrow),
+  );
+  check(
+    '鼠标离开 / 失焦都把浮层收起来（传 null，而不是留下一个悬着的旧提示）',
+    afterBlur === null,
+  );
+  check(
+    '格子带 tabIndex 与 onFocus/onBlur（只支持鼠标的 tooltip 等于没有无障碍）',
+    gridCells.length === 7
+      && gridCells.every((node) => node.props.tabIndex === 0
+        && typeof node.props.onFocus === 'function' && typeof node.props.onBlur === 'function'),
+  );
+  check(
+    '量不到矩形（退化环境 / 合成事件）时仍给出文本、位置退回容器左上角，不抛',
+    (() => {
+      const collected = [];
+      const tree = renderHeatmapFn(points, tFor, { range: null, onTipChange: (next) => collected.push(next) });
+      const cell = findClass(findClass(tree, /stu-heatBody/)[0] ?? {}, /stu-heatCell/)[0];
+      cell.props.onMouseEnter({ currentTarget: {} });
+      cell.props.onMouseEnter(undefined);
+      const last = collected[collected.length - 1];
+      return collected.length === 2
+        && collected.every((tip) => tip !== null && Number.isFinite(tip.left) && Number.isFinite(tip.top))
+        && last.day === cell.props.key;
+    })(),
+  );
+  check(
+    '格子上没有 title 但有 aria-label（两套提示并存会同时弹出两个；删 title 不能连无障碍一起删）',
+    gridCells.every((node) => node.props.title === undefined
+      && typeof node.props['aria-label'] === 'string'
+      && node.props['aria-label'].includes('token')),
+  );
+}
+
 
 /* ---------------- 汇总 ---------------- */
 console.log('');
