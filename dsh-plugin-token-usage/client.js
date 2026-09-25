@@ -187,27 +187,31 @@ window.__ModuleLoader__.load({
       '.stu-chartTrack{display:flex;width:100%;height:14px;border-radius:3px;overflow:hidden;background:var(--dsw-alias-bg-layer-2)}',
       '.stu-seg{height:100%;min-width:2px}',
       /*
-       * 四桶用**四个实色令牌**，不再用"同一个品牌色的不同透明度"。
+       * 图表系列色用**字面色**，这是刻意的例外，理由是可验证的：
        *
-       * 真机反馈：图表看着是"黑灰、不好看"。根因是 `opacity:.46` / `.24` 叠在
-       * 暗色主题的深背景上，几乎等于深灰——最需要看清的"缓存读"（常年占九成）
-       * 恰好落在最低的那一档。
+       * 1. `--dsw-alias-brand-primary` 在本主题里是**高对比前景色**（浅色主题下近黑、
+       *    深色主题下近白），不是彩色强调色。拿它当分类色，圆环就呈"黑 / 绿 /
+       *    浅灰"——真机截图两次确认，两次"丑"的反馈都源于此。
+       * 2. 主题里唯一真正有色的令牌只有 state-success（绿）/ warn（琥珀）/
+       *    error（红）/ idle（灰）。四路分类里放红色会给"缓存写"凭空加上失败
+       *    的含义，而灰色与浅色轨道底几乎同色、等于看不见。
+       * 3. 所以可用的分类色板实际上并不存在。字面色是唯一能给出四个可分辨、
+       *    且明暗主题下都成立的色相的办法。
        *
-       * 主题里没有分类色板，所以借 state-* 当分类色。语义名与"桶"没有对应关系，
-       * 但**分类数据本来就不靠颜色名表意**，而且有图例与数值兜底；相比之下
-       * "看不见"是纯粹的缺陷。四个都是实色，明暗两套主题下都成立。
+       * 取值与三个插件的图标同一套官方色（蓝 / 绿 / 紫 / 琥珀），因此图表与图标
+       * 自洽；都是中间调饱和度，白底与近黑底上都清晰。
        */
-      '.stu-seg[data-bucket="uncachedInputTokens"]{background:var(--dsw-alias-brand-primary)}',
-      '.stu-seg[data-bucket="outputTokens"]{background:var(--dsw-alias-state-success-primary)}',
-      '.stu-seg[data-bucket="cacheReadTokens"]{background:var(--dsw-alias-state-idle-primary)}',
-      '.stu-seg[data-bucket="cacheWriteTokens"]{background:var(--dsw-alias-state-warn-primary)}',
+      '.stu-seg[data-bucket="uncachedInputTokens"]{background:#4D6BFE}',
+      '.stu-seg[data-bucket="outputTokens"]{background:#22C55E}',
+      '.stu-seg[data-bucket="cacheReadTokens"]{background:#8B5CF6}',
+      '.stu-seg[data-bucket="cacheWriteTokens"]{background:#F5A524}',
       '.stu-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}',
       '.stu-legendItem{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}',
       '.stu-swatch{width:9px;height:9px;border-radius:2px;flex:none}',
-      '.stu-swatch[data-bucket="uncachedInputTokens"]{background:var(--dsw-alias-brand-primary)}',
-      '.stu-swatch[data-bucket="outputTokens"]{background:var(--dsw-alias-state-success-primary)}',
-      '.stu-swatch[data-bucket="cacheReadTokens"]{background:var(--dsw-alias-state-idle-primary)}',
-      '.stu-swatch[data-bucket="cacheWriteTokens"]{background:var(--dsw-alias-state-warn-primary)}',
+      '.stu-swatch[data-bucket="uncachedInputTokens"]{background:#4D6BFE}',
+      '.stu-swatch[data-bucket="outputTokens"]{background:#22C55E}',
+      '.stu-swatch[data-bucket="cacheReadTokens"]{background:#8B5CF6}',
+      '.stu-swatch[data-bucket="cacheWriteTokens"]{background:#F5A524}',
       '.stu-legendValue{color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}',
       /* ---- 图表：环形图（按模型占比） ------------------------------ */
       /*
@@ -232,14 +236,20 @@ window.__ModuleLoader__.load({
        * 暗色背景上就等于深灰。颜色只负责分组，读数看图例与数值，所以借 state-*
        * 当分类色的语义代价可以接受，"看不见"则不可接受。
        */
-      '.stu-donutSeg{stroke:var(--dsw-alias-brand-primary)}',
-      '.stu-donutSeg[data-series="1"]{stroke:var(--dsw-alias-state-success-primary)}',
-      '.stu-donutSeg[data-series="2"]{stroke:var(--dsw-alias-state-idle-primary)}',
-      '.stu-donutSeg[data-series="3"]{stroke:var(--dsw-alias-state-warn-primary)}',
-      '.stu-donutSwatch[data-series="0"]{background:var(--dsw-alias-brand-primary)}',
-      '.stu-donutSwatch[data-series="1"]{background:var(--dsw-alias-state-success-primary)}',
-      '.stu-donutSwatch[data-series="2"]{background:var(--dsw-alias-state-idle-primary)}',
-      '.stu-donutSwatch[data-series="3"]{background:var(--dsw-alias-state-warn-primary)}',
+      /*
+       * 段色按模型次序取四色，与四桶共用同一套字面色板（理由见上方四桶处）。
+       *
+       * `--dsw-alias-brand-primary` 在本主题里是黑白高对比色而非彩色，所以
+       * `[data-series="0"]` 也必须显式给色，不能靠 `.stu-donutSeg` 的默认值。
+       */
+      '.stu-donutSeg{stroke:#4D6BFE}',
+      '.stu-donutSeg[data-series="1"]{stroke:#22C55E}',
+      '.stu-donutSeg[data-series="2"]{stroke:#8B5CF6}',
+      '.stu-donutSeg[data-series="3"]{stroke:#F5A524}',
+      '.stu-donutSwatch[data-series="0"]{background:#4D6BFE}',
+      '.stu-donutSwatch[data-series="1"]{background:#22C55E}',
+      '.stu-donutSwatch[data-series="2"]{background:#8B5CF6}',
+      '.stu-donutSwatch[data-series="3"]{background:#F5A524}',
       /* 圆环中心的总量：absolute 定位，避免再叠一层 SVG 文本节点（跨浏览器基线不稳）。 */
       '.stu-donutCenter{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;pointer-events:none}',
       '.stu-donutTotal{font-size:15px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}',
@@ -259,10 +269,10 @@ window.__ModuleLoader__.load({
        */
       '.stu-trendSvg{display:block;width:100%;height:120px;overflow:visible}',
       /* 折线不填充（没有可比对的基准，填充面积只会让人误读成"累积量"）。 */
-      '.stu-trendLine{fill:none;stroke:var(--dsw-alias-brand-primary);stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}',
+      '.stu-trendLine{fill:none;stroke:#4D6BFE;stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}',
       /* 基线用 border-l1：它是刻度不是数据，不能和数据同色。 */
       '.stu-trendBase{stroke:var(--dsw-alias-border-l1);stroke-width:1;vector-effect:non-scaling-stroke}',
-      '.stu-trendDot{fill:var(--dsw-alias-brand-primary)}',
+      '.stu-trendDot{fill:#4D6BFE}',
       '.stu-trendAxis{display:flex;justify-content:space-between;gap:12px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}',
       '.stu-trendEmpty{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
       '.stu-notice{padding:8px 12px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',

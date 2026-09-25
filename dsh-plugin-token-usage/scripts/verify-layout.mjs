@@ -143,11 +143,28 @@ const RAW_COLOR = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/;
  * 它必须**只出现在 box-shadow 声明里**，其它任何地方出现裸色都算违规。
  */
 const SHADOW_EXCEPTION = /^box-shadow\s*:\s*[\s\S]*rgba\(0,\s*0,\s*0,\s*\.16\)$/;
+/*
+ * 图表系列色的**唯一例外**，且必须是受控白名单。
+ *
+ * 规则本身（界面颜色一律走令牌）不变，但真机证明了主题令牌在这里给不出分类色板：
+ * `--dsw-alias-brand-primary` 是**高对比前景色**（浅色主题下近黑、深色主题下近白），
+ * 不是彩色强调色——两次"图表配色丑"的反馈都源于拿它当系列色。唯一真正有色的令牌
+ * 只有 green / amber / red / idle，凑不出四路分类：红色会给"缓存写"凭空加上失败
+ * 的含义，灰色又与轨道底几乎同色。
+ *
+ * 所以系列色走字面色，取值与三个插件的图标同一套官方色。这里收成白名单而不是
+ * 放宽规则：只允许这四个值，且只允许出现在图表系列选择器上。
+ */
+const CHART_PALETTE = ['#4D6BFE', '#22C55E', '#8B5CF6', '#F5A524'];
+const CHART_COLOR_RULE = /^\.stu-(seg|swatch)\[data-bucket="[^"]+"\]$|^\.stu-donutSeg(\[data-series="\d"\])?$|^\.stu-donutSwatch\[data-series="\d"\]$|^\.stu-trend(Line|Dot)$/;
+const chartPaletteUse = [];
 const rawColorDecls = [];
 const rawColorValues = new Set();
 const strayVars = new Set();
 const nonTokenColor = [];
 for (const [selector, body] of rules) {
+  // 图表系列选择器整条豁免下文两条"必须用令牌"的检查，改由白名单单独校验。
+  const isChartSeries = CHART_COLOR_RULE.test(selector);
   for (const declaration of body.split(';')) {
     const text = declaration.trim();
     const colon = text.indexOf(':');
@@ -156,11 +173,13 @@ for (const [selector, body] of rules) {
     const value = text.slice(colon + 1).trim();
     if (RAW_COLOR.test(value)) {
       for (const match of value.matchAll(/#[0-9a-fA-F]{3,8}\b|\brgba?\([^)]*\)|\bhsla?\([^)]*\)/g)) rawColorValues.add(match[0]);
+      if (isChartSeries) { chartPaletteUse.push(selector + ' = ' + value); continue; }
       if (!SHADOW_EXCEPTION.test(text)) rawColorDecls.push(selector + ' { ' + text + ' }');
     }
     for (const match of value.matchAll(/var\((--[A-Za-z0-9-]+)/g)) {
       if (!match[1].startsWith('--dsw-')) strayVars.add(match[1]);
     }
+    if (isChartSeries) continue;
     // 只有「值里确实带颜色」的声明才要求用令牌；border-bottom:0 / border-radius:10px 不含颜色，跳过。
     if (!COLOR_PROP.test(property)) continue;
     if (SHADOW_EXCEPTION.test(text)) continue;
@@ -170,14 +189,31 @@ for (const [selector, body] of rules) {
     nonTokenColor.push(selector + ' { ' + text + ' }');
   }
 }
+/*
+ * 上述白名单的校验。`chartPaletteUse` 由第 3 组的主循环填充（它按 `rules` 迭代，
+ * 选择器是干净的）——这里**不要再自己解析一遍 cssBlock**：CSS 是每行一个字符串
+ * 字面量，自己切会把前导引号带进选择器，导致白名单永远匹配不上。
+ */
 check(
-  '除 box-shadow 的 rgba(0,0,0,.16) 外没有裸颜色字面量',
+  '除 box-shadow 的 rgba(0,0,0,.16) 与图表色板外没有裸颜色字面量',
   rawColorDecls.length === 0,
   rawColorDecls.join(', '),
 );
 check(
-  '唯一允许的裸色值就是 box-shadow 的 rgba(0,0,0,.16)',
-  [...rawColorValues].every((value) => /^rgba\(0,\s*0,\s*0,\s*\.16\)$/.test(value)),
+  '图表色板只用白名单里的四个色值（不允许随手加第五个颜色）',
+  chartPaletteUse.length >= 12
+    && chartPaletteUse.every((entry) => CHART_PALETTE.some((color) => entry.endsWith(' ' + color))),
+  chartPaletteUse.join(' | '),
+);
+check(
+  '图表四桶与环形四段用的是**同一套**色板（两边不一致会让人读错归属）',
+  ['#4D6BFE', '#22C55E', '#8B5CF6', '#F5A524'].every((color) =>
+    chartPaletteUse.filter((entry) => entry.endsWith(' ' + color)).length >= 2),
+  chartPaletteUse.join(' | '),
+);
+check(
+  '除上述白名单外没有其它裸颜色值',
+  [...rawColorValues].every((value) => /^rgba\(0,\s*0,\s*0,\s*\.16\)$/.test(value) || CHART_PALETTE.includes(value)),
   [...rawColorValues].join(', '),
 );
 check('颜色属性一律使用 var(--dsw-alias-*)', nonTokenColor.length === 0, nonTokenColor.join(', '));
@@ -567,25 +603,30 @@ check(
 /*
  * 四桶配色：**四个实色令牌**。
  *
- * 这两条断言原先守的是"同一个品牌色的四档透明度"。真机反馈是图表"黑灰、
- * 不好看"——低透明度叠在暗色主题的深背景上就等于深灰，而最需要看清的"缓存读"
- * （常年占九成）恰好落在最低那档。方案被推翻，断言也跟着改成守新方案。
+ * 这两条断言几经推翻，最终形态是"四个色相明确的字面色"：
  *
- * 主题没有分类色板，所以借 state-* 当分类色：分类数据不靠颜色名表意，且有图例
- * 与数值兜底；"看不见"则是纯粹的缺陷。
+ *   1. 最初是"同一个品牌色的四档透明度"——暗色主题下 `.24` 等于深灰，
+ *      而占九成的"缓存读"恰好落在最低那档，等于看不见。
+ *   2. 改成借 state-* 当分类色后，真机截图暴露了更深的问题：
+ *      `--dsw-alias-brand-primary` 在本主题里是**高对比前景色**（浅色下近黑、
+ *      深色下近白），于是圆环呈"黑 / 绿 / 浅灰"，仍然难看。
+ *   3. 唯一真正有色的令牌只有 green / amber / red / idle，凑不出四路分类色板
+ *      （红色会给"缓存写"凭空加上失败含义，灰色与轨道底同色）。
+ *
+ * 所以走字面色，取值与三个插件的图标同一套官方色。白名单校验见第 3 组。
  */
 check(
-  '四桶用四个不同的实色令牌（不再是同色的透明度梯度）',
-  /\.stu-seg\[data-bucket="uncachedInputTokens"\]\{background:var\(--dsw-alias-brand-primary\)\}/.test(cssBlock)
-    && /\.stu-seg\[data-bucket="outputTokens"\]\{background:var\(--dsw-alias-state-success-primary\)\}/.test(cssBlock)
-    && /\.stu-seg\[data-bucket="cacheReadTokens"\]\{background:var\(--dsw-alias-state-idle-primary\)\}/.test(cssBlock)
-    && /\.stu-seg\[data-bucket="cacheWriteTokens"\]\{background:var\(--dsw-alias-state-warn-primary\)\}/.test(cssBlock),
+  '四桶用四个不同色相的字面色（不再是同色的透明度梯度，也不是黑白 brand）',
+  /\.stu-seg\[data-bucket="uncachedInputTokens"\]\{background:#4D6BFE\}/.test(cssBlock)
+    && /\.stu-seg\[data-bucket="outputTokens"\]\{background:#22C55E\}/.test(cssBlock)
+    && /\.stu-seg\[data-bucket="cacheReadTokens"\]\{background:#8B5CF6\}/.test(cssBlock)
+    && /\.stu-seg\[data-bucket="cacheWriteTokens"\]\{background:#F5A524\}/.test(cssBlock),
 );
 check(
   '四桶与图例色块同色（色块与实际条形必须一致，否则图例撒谎）',
-  /\.stu-swatch\[data-bucket="outputTokens"\]\{background:var\(--dsw-alias-state-success-primary\)\}/.test(cssBlock)
-    && /\.stu-swatch\[data-bucket="cacheReadTokens"\]\{background:var\(--dsw-alias-state-idle-primary\)\}/.test(cssBlock)
-    && /\.stu-swatch\[data-bucket="cacheWriteTokens"\]\{background:var\(--dsw-alias-state-warn-primary\)\}/.test(cssBlock),
+  /\.stu-swatch\[data-bucket="outputTokens"\]\{background:#22C55E\}/.test(cssBlock)
+    && /\.stu-swatch\[data-bucket="cacheReadTokens"\]\{background:#8B5CF6\}/.test(cssBlock)
+    && /\.stu-swatch\[data-bucket="cacheWriteTokens"\]\{background:#F5A524\}/.test(cssBlock),
 );
 check(
   '四桶不再用透明度拉开层次（暗色主题下会退化成看不见的深灰）',
@@ -620,12 +661,12 @@ check(
     && /const SEGMENT_SERIES = 4/.test(source),
 );
 check(
-  '环形图段色由 CSS 的 data-series 决定（四个实色令牌），不用内联透明度',
+  '环形图段色由 CSS 的 data-series 决定（四个字面色，与四桶同一套），不用内联透明度',
   /'data-series':\s*String\(segment\.series\)/.test(source)
     && !/strokeOpacity:\s*segment\.opacity/.test(source)
-    && /\.stu-donutSeg\[data-series="1"\]\{stroke:var\(--dsw-alias-state-success-primary\)\}/.test(cssBlock)
-    && /\.stu-donutSeg\[data-series="2"\]\{stroke:var\(--dsw-alias-state-idle-primary\)\}/.test(cssBlock)
-    && /\.stu-donutSeg\[data-series="3"\]\{stroke:var\(--dsw-alias-state-warn-primary\)\}/.test(cssBlock),
+    && /\.stu-donutSeg\[data-series="1"\]\{stroke:#22C55E\}/.test(cssBlock)
+    && /\.stu-donutSeg\[data-series="2"\]\{stroke:#8B5CF6\}/.test(cssBlock)
+    && /\.stu-donutSeg\[data-series="3"\]\{stroke:#F5A524\}/.test(cssBlock),
 );
 check(
   '环形图圆心显示总量（formatTokens），不是空白',
