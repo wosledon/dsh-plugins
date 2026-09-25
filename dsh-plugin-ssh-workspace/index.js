@@ -17,6 +17,7 @@
 import { Config } from './lib/config.js';
 import { CONFIG_NS, PACKAGE_NAME } from './lib/constants.js';
 import { createStore } from './lib/store.js';
+import { readSshHosts } from './lib/sshhosts.js';
 import { buildTools, listRemoteDir } from './lib/tools.js';
 import {
   escapeRemotePath,
@@ -52,6 +53,20 @@ export function apply(ctx, rawConfig) {
   const cleanups = [];
 
   /*
+   * **主机只有一个来源：`~/.ssh/config`。**
+   *
+   * 每次调用都重新读文件（几 KB，代价可忽略）：用户随时可能改 ssh config，
+   * 缓存只会带来"改了配置但插件还显示旧的"。`getHosts()` 给工具用，
+   * `syncHosts()` 把结果投影到配置里给客户端读（客户端不能读文件）。
+   */
+  const getHosts = () => readSshHosts().hosts;
+
+  async function syncHosts() {
+    const snapshot = readSshHosts();
+    await store.setSshHosts(snapshot.hosts, snapshot.warnings, snapshot.path);
+  }
+
+  /*
    * 启动自述。fire-and-forget：它自身失败不能拖住装配。
    * `phase: 'enter'` 只证明"apply 被调用了"；`'ready'` 才是"装配走完了"。
    */
@@ -60,6 +75,9 @@ export function apply(ctx, rawConfig) {
   } catch {
     /* 自述失败不影响功能 */
   }
+
+  // 把 ssh config 的主机列表投影到配置里：客户端读不到文件，只能这样拿到列表。
+  void syncHosts();
 
   /* ---------------- 工具 ---------------- */
 
@@ -110,6 +128,7 @@ export function apply(ctx, rawConfig) {
           }
           const api = {
             getConfig: () => store.getConfig(),
+            getHosts,
             pushHistory: (record) => store.pushHistory(record),
           };
           for (const spec of buildTools(api)) {
@@ -182,7 +201,7 @@ export function apply(ctx, rawConfig) {
 
     try {
       const payload = await listRemoteDir(
-        { getConfig: () => store.getConfig(), pushHistory: (record) => store.pushHistory(record) },
+        { getConfig: () => store.getConfig(), getHosts, pushHistory: (record) => store.pushHistory(record) },
         request.hostId,
         request.path,
       );
@@ -210,7 +229,9 @@ export function apply(ctx, rawConfig) {
   if (typeof ctx.on === 'function') {
     ctx.on('settings/document-updated', (ns) => {
       if (String(ns) !== CONFIG_NS) return;
-      void serviceRequest();
+      // 每次客户端交互都顺带重读 ssh config：用户很可能刚改过它。
+      // 文件只有几 KB，这个代价换来"改了就能看到"，值得。
+      void syncHosts().then(() => serviceRequest());
     });
     // 启动时也服务一次：客户端可能在上一次宿主生命周期里写了请求，
     // 那次事件没人接。

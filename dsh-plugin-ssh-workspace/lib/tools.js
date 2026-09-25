@@ -105,7 +105,7 @@ function decorate(result, host, remoteCommand) {
 /* ------------------------------------------------------------------ */
 
 function runHosts(api) {
-  const hosts = normaliseHosts(api.getConfig().hosts);
+  const hosts = normaliseHosts(api.getHosts());
   return {
     ok: true,
     count: hosts.length,
@@ -129,7 +129,7 @@ function runHosts(api) {
 }
 
 async function runExec(api, input) {
-  const found = resolveHost(api.getConfig().hosts, input.hostId);
+  const found = resolveHost(api.getHosts(), input.hostId);
   if (found.error !== undefined) return found.error;
   const command = typeof input.command === 'string' ? input.command.trim() : '';
   if (command === '') return fail('EMPTY_COMMAND', 'command 不能为空。');
@@ -182,7 +182,7 @@ async function runExec(api, input) {
  * 能自己从 hosts 里取）。
  */
 export async function listRemoteDir(api, hostId, rawPath) {
-  const found = resolveHost(api.getConfig().hosts, hostId);
+  const found = resolveHost(api.getHosts(), hostId);
   if (found.error !== undefined) return { ...found.error, hostId };
   const path = typeof rawPath === 'string' ? rawPath.trim() : '';
   if (path === '') return { ...fail('EMPTY_PATH', 'path 不能为空。'), hostId };
@@ -215,12 +215,12 @@ export async function listRemoteDir(api, hostId, rawPath) {
 async function runListDir(api, input) {
   const payload = await listRemoteDir(api, input.hostId, input.path);
   if (payload.ok !== true) return payload;
-  const found = resolveHost(api.getConfig().hosts, input.hostId);
+  const found = resolveHost(api.getHosts(), input.hostId);
   return found.error !== undefined ? payload : decorate(payload, found.host);
 }
 
 async function runReadFile(api, input) {
-  const found = resolveHost(api.getConfig().hosts, input.hostId);
+  const found = resolveHost(api.getHosts(), input.hostId);
   if (found.error !== undefined) return found.error;
   const path = typeof input.path === 'string' ? input.path.trim() : '';
   if (path === '') return fail('EMPTY_PATH', 'path 不能为空。');
@@ -248,7 +248,7 @@ async function runReadFile(api, input) {
 }
 
 async function runProbe(api, input) {
-  const found = resolveHost(api.getConfig().hosts, input.hostId);
+  const found = resolveHost(api.getHosts(), input.hostId);
   if (found.error !== undefined) return found.error;
   const timeoutMs = resolveTimeout(api.getConfig().timeoutMs);
   const args = buildSshArgs({ host: found.host, connectTimeoutMs: Math.min(timeoutMs, 15_000) });

@@ -246,6 +246,21 @@ export function createStore(ctx, rawConfig, options) {
     }
   }
 
+  /** 写从 `~/.ssh/config` 读出来的主机列表与说明（客户端读它来列主机）。 */
+  async function setSshHosts(hosts, warnings, configPath) {
+    internal = {
+      ...internal,
+      sshHosts: Array.isArray(hosts) ? plainClone(hosts) : [],
+      sshWarnings: Array.isArray(warnings) ? warnings.map((item) => String(item)) : [],
+      sshConfigPath: String(configPath ?? ''),
+    };
+    try {
+      return await persist();
+    } catch {
+      return false;
+    }
+  }
+
   return {
     ns,
     packageName,
@@ -254,6 +269,7 @@ export function createStore(ctx, rawConfig, options) {
     getConfig,
     getRequest,
     setResult,
+    setSshHosts,
     pushHistory,
     setLastProbe,
     setLastBoot,

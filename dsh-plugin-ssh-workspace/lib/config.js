@@ -155,6 +155,35 @@ export const Config = Schema.object({
       entries: Schema.array(entrySchema).default([]),
       at: Schema.number(),
     }),
+    /**
+     * 从 `~/.ssh/config` 读出来的主机列表。
+     *
+     * 宿主写、客户端读：客户端不能读文件，所以主机列表必须由宿主投影过来。
+     * 这里**不复用上面的 `hosts`**——那是早期"手填主机"设计的遗留字段，现在
+     * 主机只来自 ssh config；分成两个字段是为了让"来源是 ssh config"这件事
+     * 在配置里也是显式的。
+     */
+    sshHosts: Schema.array(Schema.object({
+      id: Schema.string(),
+      alias: Schema.string(),
+      host: Schema.string(),
+      user: Schema.string(),
+      port: Schema.number().default(22),
+      identityFile: Schema.string(),
+      note: Schema.string(),
+    })).default([]),
+    /** ssh config 的读取说明（文件不存在、Include 未展开等）。 */
+    sshWarnings: Schema.array(Schema.string()).default([]),
+    /** 实际读取的配置文件路径，便于用户核对。 */
+    sshConfigPath: Schema.string(),
+    /**
+     * 客户端请求"重读 ssh config"的时间戳。
+     *
+     * 客户端读不到文件，只能用写一个会变的值来触发 `settings/document-updated`，
+     * 宿主在那次事件里重读配置。写一个时间戳而不是布尔开关，是因为同一个值写
+     * 两次不会产生事件——时间戳每次不同，重读才一定会发生。
+     */
+    hostsRequestedAt: Schema.number(),
   }).volatile(),
 });
 

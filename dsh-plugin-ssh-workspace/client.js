@@ -48,6 +48,8 @@ window.__ModuleLoader__.load({
       title: 'SSH 远程工作区',
       sub: '按工作区绑定远程主机；Agent 通过 ssh_exec / ssh_read_file 等工具在远端工作。',
       hosts: '远程主机',
+      hostsFromConfig: '来自 ~/.ssh/config',
+      reloadHosts: '重新读取配置',
       count: '{n} 台',
       empty: '还没有配置远程主机。填下面的表单添加第一台。',
       add: '新增主机',
@@ -96,6 +98,8 @@ window.__ModuleLoader__.load({
       title: 'SSH Remote Workspace',
       sub: 'Bind remote hosts per workspace; the Agent works there through ssh_exec / ssh_read_file and friends.',
       hosts: 'Remote hosts',
+      hostsFromConfig: 'from ~/.ssh/config',
+      reloadHosts: 'Re-read config',
       count: '{n} hosts',
       empty: 'No remote hosts yet. Add the first one with the form below.',
       add: 'Add host',
@@ -238,7 +242,16 @@ window.__ModuleLoader__.load({
         return () => { alive = false; };
       }, []);
 
-      const hosts = internals.normaliseHosts(state.config.hosts);
+      /*
+       * 主机来自 `~/.ssh/config`，由宿主读出来投影到 `internal.sshHosts`。
+       *
+       * **不再有手填主机表单**：ssh config 已经是主机信息的权威副本，在插件里再
+       * 维护一份只会产生"面板写的和 ssh 实际连的不一致"。客户端读不到文件，
+       * 所以列表必须由宿主投影过来。
+       */
+      const sshHosts = Array.isArray(state.config.internal?.sshHosts) ? state.config.internal.sshHosts : [];
+      const sshWarnings = Array.isArray(state.config.internal?.sshWarnings) ? state.config.internal.sshWarnings : [];
+      const hosts = internals.normaliseHosts(sshHosts);
       const history = internals.normaliseHistory(state.config.internal?.history, 30);
       const selected = hosts.find((item) => item.id === selectedId) ?? null;
 
@@ -401,8 +414,38 @@ window.__ModuleLoader__.load({
         return slash <= 0 ? '/' : trimmed.slice(0, slash);
       };
 
+      /**
+       * 重新读一次 ssh config。
+       *
+       * 客户端读不到文件，所以只能请宿主重读：写一个时间戳触发
+       * `settings/document-updated`，宿主在那次事件里会 `syncHosts()`，
+       * 然后这里重新 `describe()` 把新的列表取回来。
+       */
+      const reloadHosts = async () => {
+        if (settings === undefined || typeof settings.mutate !== 'function') return;
+        try {
+          await settings.mutate(CONFIG_NS, [
+            { op: 'set', path: ['internal', 'hostsRequestedAt'], value: Date.now() },
+          ]);
+          await new Promise((resolve) => setTimeout(resolve, 600));
+          const response = await settings.describe();
+          const read = internals.readConfig(response);
+          setState((current) => ({ ...current, config: read.config ?? {}, notice: null }));
+        } catch (error) {
+          setState((current) => ({
+            ...current,
+            notice: error instanceof Error ? error.message : String(error),
+          }));
+        }
+      };
+
       const body = [];
 
+      /*
+       * 页头**不放"新增主机"按钮**：主机来自 ssh config，没有可新增的东西。
+       * 早期版本这里有个按钮而它从来没显示出来（详情见 scripts/render-dump.mjs
+       * 的调查）——现在那个表单整个去掉了，问题也随之消失。
+       */
       body.push(h('div', { className: 'ssh-head', key: 'head' },
         h('div', null,
           h('h1', { className: 'ssh-title' }, t.title),
@@ -410,11 +453,18 @@ window.__ModuleLoader__.load({
         h('button', {
           className: 'ssh-btn',
           type: 'button',
-          onClick: () => setDraft({ id: undefined, label: '', host: '', port: 22, user: '', identityFile: '' }),
-        }, t.add)));
+          title: state.config.internal?.sshConfigPath ?? '',
+          onClick: () => void reloadHosts(),
+        }, t.reloadHosts)));
 
       if (state.error !== null) body.push(h('p', { className: 'ssh-error', key: 'err' }, state.error));
       if (state.notice !== null) body.push(h('p', { className: 'ssh-sub', key: 'notice' }, state.notice));
+
+      // ssh config 的读取说明（文件不存在、Include 未展开等）要显示出来，
+      // 否则"列表是空的"会被理解成插件坏了。
+      for (const [index, warning] of sshWarnings.entries()) {
+        body.push(h('p', { className: 'ssh-sub', key: `warn-${index}` }, warning));
+      }
 
       /* ---- 主机列表 ---- */
       body.push(h('div', { className: 'ssh-card', key: 'hosts' },

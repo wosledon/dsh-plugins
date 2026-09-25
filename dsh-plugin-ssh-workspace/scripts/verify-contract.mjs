@@ -500,6 +500,75 @@ if (SchemaModule !== null) {
 
 /* ------------------------------------------------------------------ */
 console.log('');
+console.log('[11. ssh config 解析（主机的唯一来源）]');
+
+/*
+ * 主机列表从 `~/.ssh/config` 读，不在插件里再维护一份——ssh config 已经是权威
+ * 副本，重填一份只会产生"面板写的和 ssh 实际连的不一致"。
+ *
+ * 这一组盯的是**匹配语义**，因为写错的后果比"列错主机"严重得多：曾经把"没有
+ * 具体名字的块"一律当默认值，于是 `Host *.internal` 的 User 被套到所有主机上
+ * ——真机含义是**用错误的用户去登录**。
+ */
+{
+  const { parseSshConfig, configHostsToHosts } = await import('../lib/sshconfig.js');
+  const sample = [
+    'Host *',
+    '  ServerAliveInterval 60',
+    '  User defaultuser',
+    '  IdentityFile ~/.ssh/id_ed25519',
+    '',
+    'Host dev',
+    '  HostName 10.0.0.5',
+    '  User deploy',
+    '  Port 2222',
+    '',
+    'Host prod web2   # 一台机器两个别名',
+    '  HostName prod.example.com',
+    '  IdentityFile ~/.ssh/prod_key',
+    '',
+    'Host *.internal',
+    '  User ops',
+    '',
+    'Host db.internal',
+    '  HostName 10.0.0.9',
+  ].join('\n');
+  const parsed = parseSshConfig(sample);
+  const byAlias = (alias) => parsed.hosts.find((host) => host.alias === alias);
+
+  realCheck('只有具体名字的块产出主机（通配块不产出）', parsed.hosts.length === 4, parsed.hosts.map((h) => h.alias).join(','));
+  realCheck('Host * 作为默认值被合并', byAlias('prod')?.user === 'defaultuser', byAlias('prod')?.user);
+  realCheck('具体块的 User 覆盖默认值', byAlias('dev')?.user === 'deploy', byAlias('dev')?.user);
+  realCheck('具体块的 Port 覆盖默认值', byAlias('dev')?.port === 2222, String(byAlias('dev')?.port));
+  realCheck('具体块未写的项继承默认值', byAlias('dev')?.identityFile === '~/.ssh/id_ed25519', byAlias('dev')?.identityFile);
+  realCheck('一行多个别名各成一条', byAlias('prod') !== undefined && byAlias('web2')?.host === 'prod.example.com');
+  /*
+   * 这条是那个真实 bug 的回归：`Host *.internal` 只该影响匹配它的主机。
+   * 写错时 prod 会拿到 ops（错误的登录用户），而不是 defaultuser。
+   */
+  realCheck('非全局通配块不污染其它主机（Host *.internal 的 User 不该给 prod）',
+    byAlias('prod')?.user === 'defaultuser' && byAlias('web2')?.user === 'defaultuser',
+    `prod=${byAlias('prod')?.user} web2=${byAlias('web2')?.user}`);
+  realCheck('通配块对匹配它的主机生效，且覆盖默认值',
+    byAlias('db.internal')?.user === 'ops', byAlias('db.internal')?.user);
+  realCheck('行尾注释被去掉（别名不被注释污染）', byAlias('web2') !== undefined);
+  realCheck('Include 被警告而不是静默忽略',
+    parseSshConfig('Include ~/.ssh/conf.d/*\nHost a\n HostName a.com').warnings.length === 1);
+  realCheck('空输入/坏输入不抛错',
+    parseSshConfig('').hosts.length === 0 && parseSshConfig(null).hosts.length === 0);
+  realCheck('坏端口回落 22', parseSshConfig('Host a\n Port nope').hosts[0].port === 22);
+  realCheck('Key=value 与 Key value 两种写法都支持',
+    parseSshConfig('Host a\n HostName=x.com\n Port=2200').hosts[0].host === 'x.com');
+  realCheck('归一化后字段与工具侧一致',
+    configHostsToHosts(parsed.hosts).every((host) => typeof host.id === 'string' && typeof host.host === 'string' && Number.isFinite(host.port)));
+  realCheck('宿主从 ssh config 取主机（不再读手填的 hosts）',
+    /const getHosts = \(\) => readSshHosts\(\)\.hosts/.test(hostCode)
+      && !/getConfig\(\)\.hosts/.test(toolsCode));
+  realCheck('ssh config 不存在时不报错，而是给一条说明',
+    /code === 'ENOENT'/.test(fs.readFileSync(path.join(root, 'lib/sshhosts.js'), 'utf8')));
+}
+
+console.log('');
 if (failures.length > 0) {
   console.log('失败 ' + failures.length + ' 项：');
   for (const item of failures) console.log('  - ' + item);
