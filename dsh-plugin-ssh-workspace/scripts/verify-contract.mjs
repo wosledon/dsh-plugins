@@ -251,6 +251,29 @@ realCheck('register 紧跟在 inject 的 generator 回调内（同一处）',
 realCheck('注册了两个席位', (code.match(/^\s*contribute\(/gm) ?? []).length === 2, String((code.match(/^\s*contribute\(/gm) ?? []).length));
 realCheck('席位名正确', code.includes("'sidebar.panellist'") && code.includes("'main'"));
 
+/*
+ * options 的**字段名**必须逐个对上。
+ *
+ * 真机事故：我原先写的是 `{ key, order, icon, title, onClick }`，结果侧边栏那一格
+ * 永远不出现，而控制台里没有一行报错。正确形状是：
+ *   - `name`  必须是席位名本身（两个席位都要给）；
+ *   - 侧边栏用 **`id`**，主页面用 **`key`**——**不是同一个字段**；
+ *   - 标题是 **`label: () => string`**（函数），不是 `title: string`。
+ * 这几条纯靠字段名，写错了没有任何运行时反馈，所以必须断言。
+ */
+realCheck('sidebar.panellist 的 options 带 name',
+  /contribute\('sidebar\.panellist',\s*\{[^}]*name:\s*'sidebar\.panellist'/.test(code));
+realCheck('sidebar.panellist 用 id（不是 key）',
+  /contribute\('sidebar\.panellist',\s*\{[^}]*\bid:\s*PANEL_ID/.test(code)
+    && !/contribute\('sidebar\.panellist',\s*\{[^}]*\bkey:/.test(code), '侧边栏误用了 key');
+realCheck('sidebar.panellist 的标题是 label 函数（不是 title 字符串）',
+  /contribute\('sidebar\.panellist',\s*\{[^}]*label:\s*\(\)\s*=>/.test(code)
+    && !/contribute\('sidebar\.panellist',\s*\{[^}]*\btitle:/.test(code), '侧边栏误用了 title');
+realCheck('main 的 options 带 name 与 key',
+  /contribute\('main',\s*\{\s*name:\s*'main',\s*key:\s*PANEL_ID\s*\}/.test(code));
+realCheck('席位注册在 ctx.effect 里（注册与清理归 fiber 所有）',
+  /ctx\.effect\(\(\) => \{[\s\S]*?contribute\('sidebar\.panellist'[\s\S]*?\}, 'ssh-workspace: slots'\)/.test(code));
+
 realCheck('主页面根容器自建滚动（main 席位不给滚动容器）',
   /\.ssh-inner\{[^}]*height:100%/.test(code) && /\.ssh-inner\{[^}]*overflow:auto/.test(code));
 realCheck('限宽在子元素上而不是滚动根上', /\.ssh-inner>\*\{[^}]*max-width/.test(code));

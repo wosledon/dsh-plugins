@@ -437,40 +437,51 @@ window.__ModuleLoader__.load({
         /* 忽略 */
       }
 
-      /**
-       * 席位注册。**必须是 generator 形式**——见文件头第 1 条。
-       * 回调返回的是 `SlotInjectionEffect`（可迭代的 disposer 序列），
-       * 不是普通 disposer；这也和已发布代码 `dsh-client-ui-sidebar-right`
-       * 的写法逐字一致。
+      /*
+       * 席位注册。
+       *
+       * 三件事缺一不可，缺了都不会报错，只是界面上"没有这个东西"：
+       *
+       * 1. **回调必须是 generator 形式**（见文件头第 1 条）。
+       * 2. **注册要放进 `ctx.effect`**，由 fiber 拥有注册与清理的生命周期。
+       * 3. **options 的字段名不是随便起的**（这一条我一开始写错了）：
+       *      - `name`  必须是席位名本身，`sidebar.panellist` 与 `main` 都要给；
+       *      - 侧边栏用 **`id`**，主页面用 **`key`**——两者不是同一个字段；
+       *      - 标题是 **`label: () => string`**（函数），不是 `title: string`。
+       *    我原先写的是 `{ key, order, icon, title, onClick }`，于是侧边栏那一格
+       *    永远不会出现，而控制台里没有一行报错。
+       *
+       * 取值形状照抄已真机验证的 token-usage / scheduled-tasks。
        */
-      const contribute = (ownerKey, options, component) => {
-        if (typeof ctx.slots?.inject !== 'function') return;
-        ctx.slots.inject(ownerKey, function* () {
-          yield ctx.slots.register(options, component);
-        });
-      };
+      ctx.effect(() => {
+        const offs = [];
+        const contribute = (ownerKey, options, component) => {
+          if (typeof ctx.slots?.inject !== 'function' || typeof ctx.slots?.register !== 'function') return;
+          const off = ctx.slots.inject(ownerKey, function* () {
+            yield ctx.slots.register(options, component);
+          });
+          if (typeof off === 'function') offs.push(off);
+        };
 
-      const openPage = () => {
-        // 打开主页面：宿主侧若提供了导航服务就用它；这里没有通用入口时
-        // 退化为无操作——入口本身仍可点，用户从侧边栏关掉再开也能看到页面。
-        const remote = isObject(ctx.remote) ? ctx.remote : {};
-        for (const key of Object.keys(remote)) {
-          const service = remote[key];
-          if (isObject(service) && typeof service.open === 'function') {
-            try { service.open(PANEL_ID); return; } catch { /* 试下一个 */ }
+        contribute('sidebar.panellist', {
+          name: 'sidebar.panellist',
+          id: PANEL_ID,
+          order: 40,
+          label: () => t.title,
+        }, PanelIcon);
+
+        contribute('main', { name: 'main', key: PANEL_ID }, () => h(UsagePage, { ctx, t, internals: safe }));
+
+        return () => {
+          for (const off of offs) {
+            try {
+              off();
+            } catch {
+              /* 单个注销失败不该阻塞其余 */
+            }
           }
-        }
-      };
-
-      contribute('sidebar.panellist', {
-        key: PANEL_ID,
-        order: 40,
-        icon: PanelIcon,
-        title: t.title,
-        onClick: openPage,
-      }, PanelIcon);
-
-      contribute('main', { key: PANEL_ID, order: 40 }, () => h(UsagePage, { ctx, t, internals: safe }));
+        };
+      }, 'ssh-workspace: slots');
 
       return undefined;
     }
