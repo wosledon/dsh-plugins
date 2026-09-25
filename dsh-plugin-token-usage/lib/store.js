@@ -210,6 +210,28 @@ export function createStore(ctx, rawConfig, identity) {
    * 里失败就 `return false`——于是另一条通道明明可用却从不尝试。
    * 现在两条都试，并把最终落在哪条记进 `lastChannel`，诊断时不必猜。
    */
+  /**
+   * 单次写入的超时上限。
+   *
+   * **真机验证过的必要性**：`trace` 停在 `startup:refreshed`，之后连 `sweep:enter`
+   * 都没落盘——说明 `editor.edit()` 有一次调用**永不 settle**。而写入是串成一条链
+   * 的，于是那一次卡住把**之后所有写入**（扫描结果、心跳、里程碑）全部堵死。
+   *
+   * 没有界就没有"失败"，只有"永远等下去"——而"永远等下去"在链式写入里等于全局停摆。
+   * 有了它，卡住的写入会超时抛错、走另一条通道、并让链继续前进。
+   */
+  const WRITE_TIMEOUT_MS = 5_000;
+
+  function withWriteTimeout(promise, label) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`${label} 写入超时（${WRITE_TIMEOUT_MS}ms）`)), WRITE_TIMEOUT_MS);
+      Promise.resolve(promise).then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (error) => { clearTimeout(timer); reject(error); },
+      );
+    });
+  }
+
   async function persistOnce() {
     if (mode === 'read-only') return false;
     const attempts = mode === 'editor'
@@ -219,7 +241,7 @@ export function createStore(ctx, rawConfig, identity) {
     for (const [channel, attempt] of attempts) {
       if (attempt === null) continue;
       try {
-        await attempt();
+        await withWriteTimeout(attempt(), channel);
         if (lastChannel !== channel) lastChannel = channel;
         return true;
       } catch (error) {
@@ -248,6 +270,19 @@ export function createStore(ctx, rawConfig, identity) {
     const next = writeTail.then(persistOnce, persistOnce);
     writeTail = next.then(() => {}, () => {});
     return next;
+  }
+
+  /**
+   * **绕过队列**的诊断写入。
+   *
+   * 上一轮真机教训：`trace` 停在 `startup:refreshed`，而它之后的 `sweep:enter`
+   * 迟迟不出现——因为队列堵住时，诊断写入也一起被堵住，于是"我用来观测堵塞的
+   * 工具本身被堵塞吃掉了"。诊断必须走在数据前面，不能被它所诊断的东西挡住。
+   *
+   * 因此直接调用 `persistOnce()`，不进 `writeTail` 链。它仍然有超时兜底。
+   */
+  function persistDiagnostic() {
+    return persistOnce();
   }
 
   return {
@@ -301,10 +336,18 @@ export function createStore(ctx, rawConfig, identity) {
     /**
      * 里程碑：只保留"最后到达的那一步"。见 `lib/config.js` 里 `traceSchema` 的
      * 说明——一次启动就能定位停在哪，而不是每轮重启只回答一个是/否问题。
+     *
+     * **绕过写入队列**（见 `persistDiagnostic` 的说明）：队列堵住时诊断必须还能落盘，
+     * 否则观测工具会被被观测的故障一起吃掉。
      */
     async setTrace(text) {
       internal = { ...internal, trace: String(text) };
-      return persist();
+      return persistDiagnostic();
+    },
+    /** 定时器心跳，同样绕过队列（它也是诊断，且要能证明"定时器在转"）。 */
+    async setHeartbeatDirect(ticks, lastTickAt) {
+      internal = { ...internal, heartbeat: { ticks, lastTickAt } };
+      return persistDiagnostic();
     },
     /**
      * 消费刷新请求：**先清空再返回**上一个值。

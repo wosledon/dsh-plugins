@@ -1,0 +1,9 @@
+# 插件的 Loader 补丁层。
+#
+# 这里**不放**任何 insert 行：本插件只需要把自己装进 profile，
+# 不往任何已发布包里插入条目。早先另两个插件在这里 insert 行是另有原因
+# （它们要接管既有的 row），本插件不需要。
+#
+# 配置的持久化走 `ctx.configEditor.edit()`（按 Loader entry 寻址），
+# 而不是依赖本文件预置行——后者在 bundle-insert 出来的行上没有对应 entry，
+# 写进去不落盘（真实踩过）。

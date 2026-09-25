@@ -232,7 +232,7 @@ export function apply(ctx, rawConfig) {
       //
       // 这里**不能**用 `.catch(() => {})` 吞掉：上一轮真机排查时心跳始终不出现，
       // 而"写失败"和"回调没触发"从外面看一模一样，白白多花了一轮。
-      void store.setHeartbeat(tickCount, Date.now()).catch((error) => {
+      void store.setHeartbeatDirect(tickCount, Date.now()).catch((error) => {
         warn(ctx, `心跳写入失败：${message(error)}`);
       });
       void sweep();

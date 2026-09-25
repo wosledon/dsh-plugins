@@ -934,7 +934,13 @@ check(
   !/timer\.unref\(\)/.test(indexCode) && !/\.unref\(\)/.test(indexCode),
 );
 check('定时器创建时留里程碑（区分"没建"与"建了没触发"）', /trace\('timer:created'\)/.test(indexCode));
-check('定时器每次触发都留里程碑与心跳', /trace\('timer:tick:' \+ tickCount\)/.test(indexCode) && /setHeartbeat\(tickCount, Date\.now\(\)\)/.test(indexCode));
+check(
+  '定时器每次触发都留里程碑与心跳，且两者都**绕过写入队列**',
+  /trace\('timer:tick:' \+ tickCount\)/.test(indexCode)
+    && /setHeartbeatDirect\(tickCount, Date\.now\(\)\)/.test(indexCode)
+    && !/setHeartbeat\(tickCount/.test(indexCode),
+  '心跳与里程碑必须绕过队列：队列堵住时诊断会被一起堵死，观测工具就失效了',
+);
 check('定时器清理（clearInterval）登记进 cleanups', /cleanups\.push\(\(\) => clearInterval\(timer\)\)/.test(indexCode));
 check('有用 ctx.effect 注册生命周期（>= 2 处）', (indexCode.match(/ctx\.effect\(/g) ?? []).length >= 2, '实际 ' + (indexCode.match(/ctx\.effect\(/g) ?? []).length);
 check(
