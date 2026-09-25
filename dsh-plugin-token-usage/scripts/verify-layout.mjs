@@ -797,9 +797,32 @@ check(
 );
 check(
   '左侧有星期标签（循环 7 行按行号取，不逐行硬编码）且只有奇数行写文字',
-  /const weekdayLabels = \[/.test(source)
+  /const weekdayKeys = \[/.test(source)
     && /for \(let row = 0; row < 7; row \+= 1\)/.test(source)
     && /className:\s*'stu-heatLabelCell'/.test(source),
+);
+/*
+ * 标签列宽必须与网格的列轨道（14px）成**整数倍**关系，否则标签列一变宽，
+ * 右侧网格的起点就跟着平移，热力图与上方月份带会错开——第 8.h 组还会把
+ * "28 = 2 × 14" 这条算术逐值钉一遍，这里先钉住它写着固定像素而不是随内容伸缩。
+ */
+check(
+  '星期标签列宽写死且是 14px 列轨道的整数倍（随语言伸缩会把右侧网格推歪）',
+  /\.stu-heatLabels\{[^}]*width:28px/.test(cssBlock)
+    && /\.stu-heatLabels\{[^}]*flex:none/.test(cssBlock)
+    && !/\.stu-heatLabels\{[^}]*width:(auto|fit-content|max-content|min-content|\d+%)/.test(cssBlock),
+  '规则：' + (rules.get('.stu-heatLabels') ?? '(找不到)'),
+);
+/*
+ * 英文标签比中文宽，宽度不够时**只允许溢出，不允许折行**：
+ * `.stu-heatLabelCell` 高度写死 11px（与格子同高），一旦折成两行就变成 22px，
+ * 它下面每一行的标签都错位一格——不报错、只是星期对不上。
+ */
+check(
+  '星期标签不折行（nowrap）：折行会让 11px 高的标签变成 22px，下面 6 行标签整体错位',
+  /\.stu-heatLabelCell\{[^}]*white-space:nowrap/.test(cssBlock)
+    && /\.stu-heatLabelCell\{[^}]*height:11px/.test(cssBlock),
+  '规则：' + (rules.get('.stu-heatLabelCell') ?? '(找不到)'),
 );
 check(
   '顶部月份标签只在新月份的第一列出现，且按"第一个有用量的格子"归属（不被首列补 0 带偏）',
@@ -1633,6 +1656,20 @@ if (internals !== null && typeof internals.heatmapGeometry === 'function') {
         && isKeyUsed(key),
     );
   }
+  /*
+   * 星期标签（周一 / 周三 / 周五）走的是**表驱动**引用——`weekdayKeys` 里存键名，
+   * 渲染时 `t(weekdayKeys[row])`（不是 `t('heatWeekdayMon')` 这种字面量），
+   * 所以这里同样放宽到"字面量出现过"；而"渲染树里的文字确实等于文案表的值"
+   * 由第 8.h 组逐字比对——那一条才是真正钉死"标签有没有走 t()"的断言。
+   */
+  for (const key of ['heatWeekdayMon', 'heatWeekdayWed', 'heatWeekdayFri']) {
+    check(
+      '星期标签文案键 ' + key + ' 在中英两表都存在且被引用',
+      new RegExp('^\\s*' + key + '\\s*:', 'm').test(zhBody)
+        && new RegExp('^\\s*' + key + '\\s*:', 'm').test(enBody)
+        && isKeyUsed(key),
+    );
+  }
 }
 
 /* ---- 8.f 日期区间：默认近一个月 + 可夹取、可清空、可交换 ---- */
@@ -2203,6 +2240,261 @@ if (renderHeatmapFn !== null && typeof internals.defaultRange === 'function') {
       && typeof node.props['aria-label'] === 'string'
       && node.props['aria-label'].includes('token')),
   );
+}
+
+/* ---- 8.h 星期轴双语 + 原生日期控件的配色前提 ---- */
+
+/*
+ * 两组"渲染成功、但界面在另一半语言/另一半主题下是错的"的回归断言。
+ *
+ * 甲、星期轴标签改走文案表。
+ *     原先写死 `['','一','','三','','五','']`，英文界面下星期轴仍是中文——
+ *     只发生在切换语言之后，正则看不出、默认语言下也复现不了。所以这里按
+ *     **渲染出来的文字**逐字比对，而不是查 `t('heatWeekdayMon')` 在不在源码里
+ *     （比正则强：改了文案表却忘了接线，这里会红）。
+ *
+ * 乙、原生日期选择器的**日历图标**由浏览器按页面的 `color-scheme` 决定，
+ *     前置代码只给输入框上了令牌色。所以必须先查证"应用自己有没有设 `color-scheme`"，
+ *     再决定改不改——这一段就是那份查证的结论落成的断言。
+ */
+console.log('');
+console.log('[8.h 星期轴双语 + 原生日期控件的配色前提]');
+
+if (renderHeatmapFn !== null && zhBody !== '' && enBody !== '') {
+  const findClass = (node, pattern) => findByClass(node, pattern, []);
+  const textOf = (node) => (node?.children ?? []).filter((child) => typeof child === 'string').join('');
+  /** 用**真实的中文文案表**渲染：组件里的 t 就是"键→当前语言文案"，这里等价于中文界面。 */
+  const localeOf = (body) => (key) => valueOf(body, key) ?? key;
+
+  const heatInput = [
+    { day: '2026-06-01', total: 10 },
+    { day: '2026-06-02', total: 30 },
+    { day: '2026-06-03', total: 20 },
+  ];
+  const zhLabels = findClass(renderHeatmapFn(heatInput, localeOf(zhBody)), /stu-heatLabelCell/).map(textOf);
+  const enLabels = findClass(renderHeatmapFn(heatInput, localeOf(enBody)), /stu-heatLabelCell/).map(textOf);
+  // 只比较**有文字的那三行**（空行是布局占位，本来就没有文案可比）。
+  const zhWeekday = zhLabels.filter((text) => text !== '');
+  const enWeekday = enLabels.filter((text) => text !== '');
+  console.log('  统计：中文星期轴 ' + JSON.stringify(zhLabels) + '，英文 ' + JSON.stringify(enLabels) + '。');
+
+  check(
+    '星期轴仍是 7 行、只标奇数行（3 行有字、4 行留空——隔行标才不挤）',
+    zhLabels.length === 7 && enLabels.length === 7
+      && zhLabels.filter((text) => text !== '').length === 3
+      && enLabels.filter((text) => text !== '').length === 3,
+    JSON.stringify([zhLabels, enLabels]),
+  );
+  /*
+   * 三条逐字断言，把"标签真的等于文案表的值"钉住。
+   * 判据是**渲染树里的文字**：把标签改回硬编码中文（负向对照 A）时，
+   * 中文树仍然对得上（这正是这个 bug 骗过默认语言的原因），但下面第 2 条立刻红。
+   */
+  check(
+    '中文渲染树里星期标签的文字**等于中文文案表的值**（一 / 三 / 五）',
+    zhWeekday.join(',') === [
+      valueOf(zhBody, 'heatWeekdayMon'), valueOf(zhBody, 'heatWeekdayWed'), valueOf(zhBody, 'heatWeekdayFri'),
+    ].join(','),
+    JSON.stringify(zhWeekday),
+  );
+  check(
+    '英文渲染树里星期标签的文字**等于英文文案表的值**（Mon / Wed / Fri，不再是中文）',
+    enWeekday.join(',') === [
+      valueOf(enBody, 'heatWeekdayMon'), valueOf(enBody, 'heatWeekdayWed'), valueOf(enBody, 'heatWeekdayFri'),
+    ].join(','),
+    JSON.stringify(enWeekday),
+  );
+  check(
+    '三行标签落在周一 / 周三 / 周五（第 2 / 4 / 6 行，0 起算），不是随便三行',
+    zhLabels[1] !== '' && zhLabels[3] !== '' && zhLabels[5] !== ''
+      && [0, 2, 4, 6].every((row) => zhLabels[row] === ''),
+    JSON.stringify(zhLabels),
+  );
+  check(
+    '英文星期轴不含任何 CJK 字符（英文界面下星期轴必须是英文）',
+    enWeekday.every((text) => !/[\u4e00-\u9fff]/.test(text)),
+    JSON.stringify(enWeekday),
+  );
+  check(
+    '中英星期轴键集合一致：两表三个键的值互不相同且都非空（不会一边有字一边空着）',
+    ['heatWeekdayMon', 'heatWeekdayWed', 'heatWeekdayFri'].every((key) =>
+      typeof valueOf(zhBody, key) === 'string' && valueOf(zhBody, key).length > 0
+      && typeof valueOf(enBody, key) === 'string' && valueOf(enBody, key).length > 0),
+  );
+}
+
+/*
+ * 标签列宽：英文标签比中文宽，所以这里逐值算一遍"留给每个标签的宽度够不够"。
+ *
+ * 为什么不用"查 CSS 里写着 28px"了事：写死宽度只是**手段**，要守的是
+ *   1. 列宽必须是网格列轨道（14px）的整数倍——否则标签列一变宽，右侧网格的起点
+ *      就跟着平移，热力图与上方月份带错开，读者会把格子数错一行；
+ *   2. 留给单个标签的宽度要放得下最长的标签（英文 `Wed`）；
+ *   3. 装不下时只能**溢出**，不能折行、不能省略号截断——静默截断就是"看不见的错"。
+ * 三条都按 CSS 里真实的数字算（字号、列宽都从规则里读），不在这里重复写死。
+ */
+{
+  const labelsRule = rules.get('.stu-heatLabels') ?? '';
+  const labelCellRule = rules.get('.stu-heatLabelCell') ?? '';
+  const trackWidth = Number((/repeat\(var\(--stu-heat-weeks\),(\d+(?:\.\d+)?)px\)/.exec(cssBlock) ?? [])[1]);
+  const labelWidth = Number((/width:(\d+(?:\.\d+)?)px/.exec(labelsRule) ?? [])[1]);
+  const fontSize = Number((/font-size:(\d+(?:\.\d+)?)px/.exec(labelCellRule) ?? [])[1]);
+  /*
+   * 标签**行高**（不是列宽）的间隔也从规则里读：它决定标签能不能在竖直方向
+   * 与 11px 的格子对齐，是"标签行"和"格子行"能不能一一对应的一半条件
+   * （另一半是标签本身不折行，见下面最后一条）。
+   */
+  const labelGap = Number((/gap:(\d+(?:\.\d+)?)px/.exec(labelsRule) ?? [])[1]);
+
+  check(
+    '能解析出标签列宽 / 列轨道宽 / 标签字号（比较的前提，读不到就没法算）',
+    Number.isFinite(trackWidth) && Number.isFinite(labelWidth) && Number.isFinite(fontSize)
+      && trackWidth > 0 && labelWidth > 0 && fontSize > 0,
+    JSON.stringify({ trackWidth, labelWidth, fontSize, labelGap }),
+  );
+  check(
+    '标签列宽是网格列轨道（' + trackWidth + 'px）的整数倍：' + labelWidth + 'px = '
+      + Math.round((labelWidth / trackWidth) * 100) / 100 + ' 列',
+    Number.isFinite(labelWidth) && Number.isFinite(trackWidth)
+      && Number.isInteger(Math.round((labelWidth / trackWidth) * 1e6) / 1e6),
+    '标签列 ' + labelWidth + 'px，列轨道 ' + trackWidth + 'px',
+  );
+  /*
+   * 每个标签可用的是**整列宽**：`.stu-heatLabels` 是 `flex-direction:column`，
+   * 7 个 span 在交叉轴（水平方向）上各自撑满整列，`gap` 只吃垂直方向的高度。
+   * （这里最初按"列宽 / 7"算，于是 28px 的列被算成每行 1.4px、断言恒红——
+   * 把布局模型写错的自检比没有自检更糟，因为它会逼着人去改对的代码。）
+   *
+   * 保守的字符宽度系数：CJK 取 0.95em、拉丁取 0.62em——都比真机字体宽，
+   * 所以"算得过"意味着真机上只会更宽松。数字全部来自上面的 CSS 规则。
+   */
+  const perLabel = labelWidth;
+  const cjkNeed = fontSize * 0.95;
+  const latinNeed = fontSize * 0.62 * 3;
+  check(
+    '留给单个标签的宽度放得下英文标签（' + latinNeed.toFixed(1) + 'px ≤ ' + perLabel.toFixed(1) + 'px）；'
+      + '中文更宽，' + cjkNeed.toFixed(1) + 'px ≤ ' + perLabel.toFixed(1) + 'px',
+    cjkNeed <= perLabel && latinNeed <= perLabel,
+    '每行可用 ' + perLabel.toFixed(2) + 'px，CJK 需 ' + cjkNeed.toFixed(2) + 'px，拉丁 3 字母需 ' + latinNeed.toFixed(2) + 'px',
+  );
+  check(
+    '宽标签只允许**溢出**，不允许折行、省略号截断或裁剪（三者都是静默的错）',
+    /white-space:nowrap/.test(labelCellRule)
+      && !/overflow(-x|-y)?\s*:\s*(hidden|clip)/.test(labelCellRule)
+      && !/text-overflow\s*:\s*ellipsis/.test(labelCellRule),
+    '规则：' + labelCellRule,
+  );
+  /*
+   * 宽度不够时 "nowrap + 溢出" 仍会把文字画到网格上，所以宽度本身要够；
+   * 而高度必须被钉住——折行会让 11px 的标签变成 22px，下面 6 行标签整体错位一格。
+   */
+  check(
+    '标签高度与格子同高（11px）且不折行，否则 7 行标签会整体错位一格',
+    /height:11px/.test(labelCellRule) && /white-space:nowrap/.test(labelCellRule),
+  );
+  /*
+   * 标签行与格子行必须用**同一套节距**（11px 行高 + 同样的 gap），否则 7 行标签会
+   * 逐行累积错位——第一行还对得上、第七行差半格，看起来像"星期标错了"。
+   * 节距从两处规则里各读一次，逐值比较（不在这里重复写死数字）。
+   */
+  const labelPitch = Number((/line-height:(\d+(?:\.\d+)?)px/.exec(labelCellRule) ?? [])[1]) + labelGap;
+  const cellPitch = Number((/\.stu-heatBody\{[^}]*gap:(\d+(?:\.\d+)?)px/.exec(cssBlock) ?? [])[1])
+    + Number((/\.stu-heatCell\{[^}]*height:(\d+(?:\.\d+)?)px/.exec(cssBlock) ?? [])[1]);
+  check(
+    '标签行与格子行用同一套节距（' + labelPitch + 'px vs ' + cellPitch + 'px）：节距不同会逐行累积错位',
+    Number.isFinite(labelPitch) && Number.isFinite(cellPitch) && labelPitch === cellPitch,
+    '标签 ' + labelPitch + 'px，格子 ' + cellPitch + 'px',
+  );
+}
+
+/*
+ * 日历图标：**查证结论是"不需要动手"**，所以这里断言的是那个前提，而不是一条新规则。
+ *
+ * 证据（已发布应用，用 _scratch/asar.mjs 从 resources/app.asar 里读出的原文）：
+ *
+ *   1. `@deepseek-ai/dsh-client-ui-theme/lib/index.js`
+ *        const light = `:root{color-scheme:light}body{…}`;
+ *        const dark  = `:root{color-scheme:dark}body{…}`;
+ *        function bootThemeStyle(preference) { … return `${light}@media(prefers-color-scheme:dark){${dark}}` }
+ *      —— 宿主把这段作为 `kind:"style"` 注入 `<head>`（`bootThemeInjections`），
+ *      **在任何脚本执行之前**就定下了文档的配色方案；`system` 偏好退化成
+ *      `prefers-color-scheme` 媒体查询。所以首屏的原生控件就已经跟着主题走。
+ *
+ *   2. `@deepseek-ai/dsh-client-ui-layout/lib/client.js`（类 ThemePresenter）
+ *        apply(snapshot) {
+ *          const scheme = snapshot.active.colorScheme;
+ *          document.documentElement.style.colorScheme = scheme;
+ *          document.documentElement.setAttribute(THEME_SOURCE_ATTRIBUTE, …);
+ *          if (scheme === "dark") body.setAttribute(DARK_ATTRIBUTE, ""); …
+ *        }
+ *      —— 运行时切主题时，根元素的 `color-scheme` 由 ThemePresenter 持续改写
+ *      （dispose() 里 removeProperty 归还）。用户从浅色切到深色，原生日期图标
+ *      在同一帧里跟着变，不存在"深色主题下压着一个黑图标"的窗口。
+ *
+ * 因此本插件**不加** `::-webkit-calendar-picker-indicator` 的对比度覆盖（那会在
+ * 另一种主题下反过来出错），更不写死 `color-scheme:dark|light`（同理，而且会与
+ * 宿主的 applier 抢同一份设置）。这里把"依赖宿主设了根 color-scheme"这个前提记下来：
+ * 哪天宿主不再设置，本地断言会先红，而不是等到真机上"图标看不见"才发现。
+ * 视觉结论仍需真机确认（图标本身是浏览器绘制的，静态分析看不到它）。
+ */
+check(
+  '本插件不自己设 color-scheme（写死 dark/light 会在另一种主题下反过来出错，也与宿主抢同一份设置）',
+  !/color-scheme|colorScheme/.test(source),
+  'client.js 里出现了 color-scheme',
+);
+check(
+  '不覆盖原生日历图标的对比度、也不自绘图标：图标跟随宿主设的 color-scheme（证据见本节注释）',
+  !/calendar-picker-indicator|showPicker/.test(source),
+);
+
+/** 读已发布应用包里的内部路径；读不到返回 null（调用方据此"跳过并说明"，不静默变绿）。 */
+const PUBLISHED_APP_ASAR = process.env.DSH_APP_ASAR
+  ?? 'E:/DeepSeek Harness/resources/app.asar';
+const PUBLISHED = 'dsh/node_modules/@deepseek-ai';
+{
+  const { execFileSync } = await import('node:child_process');
+  const readerFile = path.join(root, '..', '_scratch', 'asar.mjs');
+  const readPublished = (internalPath) => {
+    if (!fs.existsSync(PUBLISHED_APP_ASAR) || !fs.existsSync(readerFile)) return null;
+    try {
+      return execFileSync(process.execPath, [readerFile, 'read', PUBLISHED_APP_ASAR, internalPath],
+        { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+    } catch {
+      return null;
+    }
+  };
+  const themeBoot = readPublished(PUBLISHED + '/dsh-client-ui-theme/lib/index.js');
+  const themeLayout = readPublished(PUBLISHED + '/dsh-client-ui-layout/lib/client.js');
+  if (themeBoot === null || themeLayout === null) {
+    console.log('  跳过 宿主 color-scheme 证据断言：读不到已发布应用包（'
+      + PUBLISHED_APP_ASAR + '，可用 DSH_APP_ASAR 覆盖）。'
+      + '这不是"通过"——它意味着本次运行没有验证"原生日期图标跟随主题"这个前提。');
+  } else {
+    check(
+      '宿主主题启动样式在 :root 上设了 color-scheme（light / dark 两档都在，system 走 media query）',
+      /:root\{color-scheme:light\}/.test(themeBoot)
+        && /:root\{color-scheme:dark\}/.test(themeBoot)
+        && /prefers-color-scheme:dark/.test(themeBoot),
+    );
+    check(
+      '宿主在脚本执行前把这段样式注入 head（kind:"style"）：首屏原生控件的配色就已经定了',
+      /kind:\s*"style"/.test(themeBoot) && /bootThemeInjections/.test(themeBoot),
+    );
+    /*
+     * 光有首屏样式不够：运行时切主题时必须有东西改写根元素的 `color-scheme`。
+     * 这里要求 apply() 里写的是**从快照取出的**配色方案（而不是写死 dark/light），
+     * 并且 dispose() 会把它归还——否则主题插件卸载后会留下一个错的配色方案。
+     */
+    check(
+      '宿主运行时切主题时会改写根元素 color-scheme（apply 取 active.colorScheme，dispose 归还）',
+      /document\.documentElement\.style\.colorScheme\s*=\s*scheme/.test(themeLayout)
+        && /const scheme = snapshot\.active\.colorScheme/.test(themeLayout)
+        && /document\.documentElement\.style\.removeProperty\("color-scheme"\)/.test(themeLayout),
+    );
+    console.log('  证据：宿主在两处设置根 color-scheme —— 启动 head 样式（'
+      + PUBLISHED + '/dsh-client-ui-theme/lib/index.js）与运行时 ThemePresenter（'
+      + PUBLISHED + '/dsh-client-ui-layout/lib/client.js）。');
+  }
 }
 
 

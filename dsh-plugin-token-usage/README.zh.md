@@ -28,12 +28,18 @@
   模型、输入、输出、缓存读、缓存写、合计、占比 —— 按总量降序排列，
   **每页 20 行**，带一个「刷新」按钮。表格上方还有两张图：按模型占比的环形图，
   以及**按天的贡献热力图**（一列 = 一周，一行 = 一个星期几，越深 = 那天 token 越多）。
+  左侧星期轴只标隔行的三行（周一 / 周三 / 周五），文案走 `t()`，**英文界面下是
+  `Mon` / `Wed` / `Fri`**（英文比中文宽，标签列宽因此写死为网格列轨道 14px 的整数倍
+  28px，这样右侧网格的起点不随语言平移）。
   热力图默认只画**数据末尾往前 30 天** —— 锚点是**数据里最晚的那一天，不是今天**：
   这份 timeline 是历史扫描的产物，可能已经陈旧，用今天当锚点只会画出一片没有用量的空列。
   上方给两个日期输入与「近 7 天 / 近 30 天 / 全部」三个预设：输入的范围会被**夹到数据的真实
   跨度**并写回输入框（框里显示的就是画出来的），清空某一端表示那一端不限制。
   鼠标悬停或键盘聚焦格子时给的是**自绘浮层**，不再是原生 `title`（原生 tooltip 的样式由系统
   渲染、无法用 CSS 定制）；格子仍然带 `aria-label`，无障碍不退化。
+  两个日期输入显式上了令牌色（`bg-layer-2 / border-l2 / label-primary`），
+  **原生日期选择器的日历图标不另外处理**：它由浏览器按页面的 `color-scheme` 绘制，
+  而应用自己已经把它设在根元素上（见「验证状态」里的查证证据）。
 - **只用真实数字**：计数来自会话日志里 `assistant/message` 事件的 `usage` 字段，
   就是提供方适配器上报的原样。本插件**不做任何估算，也不计算费用**。
 
@@ -209,7 +215,7 @@ profile 无法写入设置时，按钮会禁用并说明原因。
 ```powershell
 node scripts/test-fold.mjs        # 全部通过：81 项断言
 node scripts/test-summary.mjs     # 全部通过：35 项断言
-node scripts/verify-layout.mjs    # 全部通过：260 项布局与结构断言
+node scripts/verify-layout.mjs    # 全部通过：282 项布局与结构断言
 node scripts/verify-contract.mjs  # 全部通过：292 项装配形状断言
 ```
 
@@ -247,6 +253,31 @@ node scripts/verify-contract.mjs  # 全部通过：292 项装配形状断言
 （否则用户被锁在空区间里出不来）。自绘 tooltip 同样被钉：它不能在横向滚动容器内部
 （在那里一定被裁）、格子必须带 `aria-label` 且**不能**带 `title`（两者并存会同时弹两个）、
 位置必须被夹在卡片内。
+
+星期轴与原生日期控件这两件事由第 8.h 组单独钉：
+
+- **星期轴的双语。** 断言不查源码里有没有 `t('heatWeekdayMon')`，而是拿中文与英文两份
+  文案表**各渲染一次真实的热力图**，逐字比对渲染树里那三行标签的文字——中文必须是
+  `一 / 三 / 五`、英文必须是 `Mon / Wed / Fri` 且不含任何 CJK 字符。把标签改回硬编码
+  中文（负向对照 A）时英文那几条立刻红。同时逐值算出标签列宽（从 CSS 规则里读列宽、
+  轨道宽、字号，不在测试里重复写死），要求它是 14px 列轨道的整数倍、放得下最长的英文
+  标签，并且只允许溢出、不允许折行或省略号截断。
+- **原生日期控件的配色前提。** 日历图标由浏览器按页面的 `color-scheme` 绘制，所以先查证
+  应用有没有自己设置它，再决定改不改。查证结果（用 `_scratch/asar.mjs` 从
+  `resources/app.asar` 读出的原文）是**应用已经设了，而且设了两处**：
+  1. `@deepseek-ai/dsh-client-ui-theme/lib/index.js` 里
+     `bootThemeStyle()` 产出 `:root{color-scheme:light}` / `:root{color-scheme:dark}`
+     （`system` 偏好包在 `@media(prefers-color-scheme:dark)` 里），宿主把它作为
+     `kind:"style"` 注入 `<head>`，**在任何脚本执行之前**就定下了文档配色；
+  2. `@deepseek-ai/dsh-client-ui-layout/lib/client.js` 的 `ThemePresenter.apply()` 里
+     `document.documentElement.style.colorScheme = snapshot.active.colorScheme`，
+     运行时切主题时持续改写（`dispose()` 里归还）。
+
+  所以**没有**加 `::-webkit-calendar-picker-indicator` 的对比度覆盖（那会在另一种主题下
+  反过来出错），也不自绘图标，更没有写死 `color-scheme`（还会与宿主的 applier 抢同一份
+  设置）。断言改成把这个**前提**钉住：本插件不出现 `color-scheme`，并在能读到已发布应用包
+  时验证上面两处证据确实存在（读不到时打印"跳过"而不是静默变绿）。图标的最终观感仍需
+  **真机确认**——它是浏览器绘制的，静态分析看不到。
 
 这套断言覆盖的是纯函数层 —— 插件两侧都依赖它算数：
 

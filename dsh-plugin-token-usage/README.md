@@ -32,7 +32,11 @@ the browser side cannot compute by itself.
   model — model, input, output, cache read, cache write, total and share — sorted by total
   descending, paginated at **20 rows per page**, with a **Refresh** button. Above the table sit
   two charts: a donut of the share by model, then a **per-day contribution heatmap** (one column
-  per week, one row per weekday, darker = more tokens that day). The heatmap opens on the **last 30
+  per week, one row per weekday, darker = more tokens that day). The weekday axis labels only
+  every other row (Mon / Wed / Fri) and goes through `t()`, so an English UI gets `Mon` / `Wed` /
+  `Fri` rather than the Chinese characters; because the English labels are wider, the label column
+  is a hard multiple of the 14 px grid track (28 px) so the grid's origin never shifts with the
+  language. The heatmap opens on the **last 30
   days of the data** — anchored at the latest day *in the data*, not at today, because a stale
   timeline would otherwise be rendered as a band of empty columns — and carries a date-range control:
   two date inputs plus `Last 7 days` / `Last 30 days` / `All` presets. Whatever you type is **clamped
@@ -40,7 +44,10 @@ the browser side cannot compute by itself.
   draws); clearing an input means "no limit on that end". Hovering or focusing a cell shows a
   **custom overlay** instead of the native `title` (the native tooltip's styling is rendered by the
   OS and cannot be customised with CSS); the cell keeps its `aria-label`, so accessibility does not
-  regress.
+  regress. The two date inputs are given explicit token colours (`bg-layer-2` / `border-l2` /
+  `label-primary`), and the **native calendar-picker icon is deliberately left alone**: the browser
+  draws it from the page's `color-scheme`, which the app already sets on the root element (see the
+  evidence under "Verification status").
 - **Real numbers only**: the counts come from the `usage` field on `assistant/message` events
   in the session log, exactly as the provider adapter reported it. The plugin **estimates
   nothing and computes no cost**.
@@ -233,7 +240,7 @@ again. If the profile cannot persist settings, the button is disabled and says s
 ```powershell
 node scripts/test-fold.mjs        # all passed: 81 assertions
 node scripts/test-summary.mjs     # all passed: 35 assertions
-node scripts/verify-layout.mjs    # all passed: 260 layout and structure assertions
+node scripts/verify-layout.mjs    # all passed: 282 layout and structure assertions
 node scripts/verify-contract.mjs  # all passed: 292 assembly-shape assertions
 ```
 
@@ -283,6 +290,36 @@ with no usage keeps the range controls on screen so the empty state is never a d
 tooltip is pinned too: it must not live inside the horizontally scrolling container (which would clip
 it), cells must carry `aria-label` and **no** `title` (keeping both shows two tooltips at once), and
 its position is clamped inside the card.
+
+Two further things are pinned by the `8.h` group:
+
+- **The weekday axis is bilingual.** The assertions do not grep for `t('heatWeekdayMon')`; they
+  render a real heatmap twice — once with the Chinese table and once with the English one — and
+  compare the text of those three labels in the render tree: Chinese must be `一 / 三 / 五`,
+  English must be `Mon / Wed / Fri` with no CJK characters at all. A negative control that puts the
+  hard-coded Chinese back turns the English assertions red. The label column width is also computed
+  value by value from the CSS rules (column width, track width and font size are read, not restated
+  in the test): it must be an integer multiple of the 14 px grid track, wide enough for the longest
+  English label, and allowed only to **overflow** — never to wrap or silently ellipsize.
+- **The colour-scheme precondition behind the native date control.** The calendar-picker icon is
+  drawn by the browser from the page's `color-scheme`, so the first question was whether the app
+  sets it at all. The evidence (read out of `resources/app.asar` with `_scratch/asar.mjs`) is that
+  it does, in two places:
+  1. `@deepseek-ai/dsh-client-ui-theme/lib/index.js` — `bootThemeStyle()` emits
+     `:root{color-scheme:light}` / `:root{color-scheme:dark}` (the `system` preference wrapped in
+     `@media(prefers-color-scheme:dark)`), and the host injects it into `<head>` as a
+     `kind:"style"` row **before any script executes**;
+  2. `@deepseek-ai/dsh-client-ui-layout/lib/client.js` — `ThemePresenter.apply()` runs
+     `document.documentElement.style.colorScheme = snapshot.active.colorScheme`, so a runtime theme
+     switch keeps the root value current (`dispose()` retracts it).
+
+  So nothing was added: no `::-webkit-calendar-picker-indicator` contrast override (which would be
+  wrong in the other theme), no hand-drawn icon, and no hard-coded `color-scheme` (which would also
+  fight the host's applier over the same setting). The assertion instead pins the **precondition**:
+  this plugin never mentions `color-scheme`, and when the published app bundle is readable, both
+  pieces of evidence above are verified (when it is not readable the suite prints a skip rather than
+  passing silently). How the icon actually looks still needs **real-device confirmation** — it is
+  painted by the browser and static analysis cannot see it.
 
 The suite covers the pure-function layer — the one both sides of the plugin rely on for
 arithmetic:

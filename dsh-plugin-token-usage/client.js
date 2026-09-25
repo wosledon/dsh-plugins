@@ -80,6 +80,15 @@ window.__ModuleLoader__.load({
       pointAria: '{day}：{total} token',
       heatLess: '少',
       heatMore: '多',
+      /*
+       * 星期轴**只标三行**（周一 / 周三 / 周五），所以只加这三个键。
+       *
+       * 不加满 7 个：第 5 组与第 10 组都有"定义了却从不使用的键"断言，
+       * 补上没被渲染的 4 个键只会立刻变红；真要标满 7 行时再成对补。
+       */
+      heatWeekdayMon: '一',
+      heatWeekdayWed: '三',
+      heatWeekdayFri: '五',
       trendRange: '日期范围',
       trendFrom: '起始日期',
       trendTo: '结束日期',
@@ -135,6 +144,10 @@ window.__ModuleLoader__.load({
       pointAria: '{day}: {total} tokens',
       heatLess: 'Less',
       heatMore: 'More',
+      /* 与 zh 一一对应（键集合必须一致）；英文标签比中文宽，列宽见 `.stu-heatLabels`。 */
+      heatWeekdayMon: 'Mon',
+      heatWeekdayWed: 'Wed',
+      heatWeekdayFri: 'Fri',
       trendRange: 'Date range',
       trendFrom: 'Start date',
       trendTo: 'End date',
@@ -322,10 +335,29 @@ window.__ModuleLoader__.load({
        * 独立一列要么跟着滚动（横滚后看不见），要么与右侧的列宽各自为政，
        * 上下两处一旦对不齐，读者会把格子数错一行。
        */
-      '.stu-heatLabels{position:sticky;left:0;z-index:1;flex:none;width:26px;display:flex;flex-direction:column;gap:3px;background:var(--dsw-alias-bg-layer-1)}',
+      /*
+       * 标签列宽度写死 28px（= 网格列轨道 14px 的**整数倍**，两列）。
+       *
+       * 为什么不用 `fit-content` / 百分比：`position:sticky` 的兄弟列一旦随语言变宽，
+       * 右侧网格的起点就跟着平移，热力图与上方的月份带会**各自为政**——而两处一旦
+       * 差半个像素，读者会把格子数错一行（这正是 labels 用 sticky 而不是独立一列的理由）。
+       * 取整数倍还保证"标签列宽"与"列的节距"永远对齐，将来调列宽时只需成倍改这里。
+       *
+       * 为什么是 28 而不是原来的 26：标签交给文案表之后，英文取 `Mon` / `Wed` / `Fri`。
+       * 9px 字号下 `Mon` 约 17px 宽，26px 的列只剩 4px 余量——字体回退到较宽的
+       * 系统字体、或将来换成 `March` 这类更长的写法就会顶到网格边上。28px 给出
+       * 9px 以上的余量，仍比任何一档网格列窄，标签列依旧是"不抢眼的一小条"。
+       */
+      '.stu-heatLabels{position:sticky;left:0;z-index:1;flex:none;width:28px;display:flex;flex-direction:column;gap:3px;background:var(--dsw-alias-bg-layer-1)}',
       /* 占位块的高度必须等于月份带（16px），否则星期一那一行的标签会整体错位一格。 */
       '.stu-heatLabelSpacer{height:16px;flex:none}',
-      '.stu-heatLabelCell{height:11px;flex:none;font-size:9px;line-height:11px;color:var(--dsw-alias-label-secondary)}',
+      /*
+       * `white-space:nowrap` 与高度 11px 是**成对**的：标签一旦折行，这个 span 就变成
+       * 22px 高，而它下面每一行的格子仍是 11px——周一那行之后整列标签都错位一格，
+       * 不报错、只是"星期对不上"。nowrap 让标签永远只占一行，宽度不够时宁可溢出
+       * （溢出不改变兄弟列的位置），也不改变高度。
+       */
+      '.stu-heatLabelCell{height:11px;flex:none;font-size:9px;line-height:11px;white-space:nowrap;color:var(--dsw-alias-label-secondary)}',
       '.stu-heatInner{display:flex;flex-direction:column;gap:3px}',
       /*
        * 月份带：与网格**共用同一套列轨道**，格子里的月份文字允许溢出到相邻轨道
@@ -1223,14 +1255,18 @@ window.__ModuleLoader__.load({
        * 隔行标已经足够让读者定位到具体是哪一天（具体日期由格子的 aria-label
        * 与自绘 tooltip 给出）。
        *
-       * 这三个字**不进文案表**：它们是 3 个单字，中英两表各存一份只会让键集合
-       * 检查多两处需要同步的死键风险，而"标签的语义"完全由图例与 aria-label 承载。
+       * 文案走 `t()`：原先写死 `['','一','','三','','五','']`，结果英文界面下
+       * 星期轴仍然是中文——这是"界面语言只有一半"的静默错，正则看不出、只有真机
+       * 切到 English 才看得见。表里只放**这一版真正渲染的 3 个键**（第 5 组与
+       * 第 10 组都断言"定义了却从不使用的键"为零），没标的那 4 行留空。
        */
-      const weekdayLabels = ['', '一', '', '三', '', '五', ''];
+      const weekdayKeys = [null, 'heatWeekdayMon', null, 'heatWeekdayWed', null, 'heatWeekdayFri', null];
       const labelCells = [];
       for (let row = 0; row < 7; row += 1) {
+        // 空行渲染成空 span（不是不渲染）：7 个 span 与 7 行格子一一对应，行号即星期。
+        const key = weekdayKeys[row];
         labelCells.push(h('span', { className: 'stu-heatLabelCell', key: 'label-' + row },
-          weekdayLabels[row]));
+          key === null ? '' : t(key)));
       }
 
       /*
