@@ -789,7 +789,19 @@ check(
 );
 check(
   'level 0 用底色令牌（"没有用量"是底色，不是第五档强度）',
-  /\.stu-heatCell\{width:11px;height:11px;border-radius:2px;background:var\(--dsw-alias-bg-layer-2\)\}/.test(cssBlock),
+  /\.stu-heatCell\{[^}]*background:var\(--dsw-alias-bg-layer-2\)/.test(cssBlock),
+);
+/*
+ * 空格子必须**看得见**。
+ *
+ * 真机缺陷：level 0 只填 `bg-layer-2`，而它与卡片自身的 `bg-layer-1` 几乎同色，
+ * 于是零用量的格子整个隐形——14 格的范围里只看得见有数据的那 2 格，用户读成
+ * "网格没画出来"。底色令牌给不出对比度，所以必须另有一圈描边把格子边界画出来。
+ */
+check(
+  '空格子有内描边（只靠 bg-layer-2 会与卡片底色同色而隐形）',
+  /\.stu-heatCell\{[^}]*box-shadow:inset 0 0 0 \.5px var\(--dsw-alias-border-l1\)/.test(cssBlock),
+  'inset 而不是 border：不占布局，11px 格子与 14px 列轨道才不会脱钩',
 );
 /*
  * 四档强度必须是**同一个色相的四档不透明度**，不能是四个色相。
