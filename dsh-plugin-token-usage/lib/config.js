@@ -103,6 +103,18 @@ const heartbeatSchema = Schema.object({
   lastTickAt: Schema.number(),
 });
 
+/**
+ * 宿主半的**里程碑字符串**：只保留"最后到达的那一步"。
+ *
+ * 为什么是一个字符串而不是一堆布尔：真机排查已经花了四轮重启，每轮只能回答一个
+ * 是/否问题。一条"最后到达哪一步"的记录能在**一次**启动里把范围缩到一个点——
+ * 是 `timer:created` 之后就没动静（定时器建了但没触发），还是连 `apply:enter`
+ * 都没有（apply 根本没被调用）。
+ *
+ * 取值形如 `startup:refreshed`、`timer:tick:3`、`scan:built`。
+ */
+const traceSchema = Schema.string();
+
 export const Config = Schema.object({
   /**
    * 一次刷新最多扫描多少个会话（按最新优先）。
@@ -117,5 +129,6 @@ export const Config = Schema.object({
     lastSweep: lastSweepSchema,
     lastBoot: lastBootSchema,
     heartbeat: heartbeatSchema,
+    trace: traceSchema,
   }).volatile(),
 });

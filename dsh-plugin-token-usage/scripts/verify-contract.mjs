@@ -682,8 +682,19 @@ check(
   settingsPersistBlock !== null && /path: \['scanLimit'\]/.test(settingsPersistBlock) && /path: \['internal'\]/.test(settingsPersistBlock),
 );
 
-const persistBlock = blockAfter(storeCode, 'async function persist()');
-check('persist() 函数体可解析', persistBlock !== null);
+/*
+ * `persist` 现在拆成两层：`persistOnce()` 是"两条通道逐个试"的本体，
+ * `persist()` 只是把它串成一条链（并发写会互相覆盖，见 store.js 里的说明）。
+ * 所以下面这些断言都改成检查本体，另外单加一条守住串行化本身。
+ */
+const persistBlock = blockAfter(storeCode, 'async function persistOnce()');
+check('persistOnce() 函数体可解析', persistBlock !== null);
+check(
+  'persist() 把写入串行化（并发读-改-写会互相覆盖：先写的可能赢，后写的被丢掉）',
+  /let writeTail = Promise\.resolve\(\)/.test(storeCode)
+    && /const next = writeTail\.then\(persistOnce, persistOnce\)/.test(storeCode)
+    && /writeTail = next\.then\(/.test(storeCode),
+);
 // 关键不变式：两条通道都在候选列表里，且是"逐个试、失败继续"的循环。
 check(
   'persist() 把两条通道都列为候选（不是按可用性二选一）',
@@ -912,7 +923,18 @@ check('catch 里 warn 而不是 throw', injectBlock !== null && /catch \(error\)
 check('注册失败时给出可诊断的 warn 文案', injectBlock !== null && /注册 tokenByModel 投影失败/.test(injectBlock));
 
 check('用 setInterval 起后台轮询', /const timer = setInterval\(/.test(indexCode));
-check('定时器调用 unref()（不阻止进程退出）', /typeof timer\?\.unref === 'function'\) timer\.unref\(\)/.test(indexCode));
+/*
+ * 断言原先写的是"定时器必须 unref()（不阻止进程退出）"。**这条被真机推翻了**：
+ * 5 分钟里心跳 0 次，而 `unref()` 恰好能让定时器在事件循环上没有其它引用时不触发。
+ * 一个负责定期续期数据的定时器就应当自己维持进程存活——把"不阻止退出"当成理由，
+ * 代价是它可能永远不跑。所以规则反过来：**禁止 unref**。
+ */
+check(
+  '定时器**不得** unref()（真机上 unref 的定时器 5 分钟 0 次触发）',
+  !/timer\.unref\(\)/.test(indexCode) && !/\.unref\(\)/.test(indexCode),
+);
+check('定时器创建时留里程碑（区分"没建"与"建了没触发"）', /trace\('timer:created'\)/.test(indexCode));
+check('定时器每次触发都留里程碑与心跳', /trace\('timer:tick:' \+ tickCount\)/.test(indexCode) && /setHeartbeat\(tickCount, Date\.now\(\)\)/.test(indexCode));
 check('定时器清理（clearInterval）登记进 cleanups', /cleanups\.push\(\(\) => clearInterval\(timer\)\)/.test(indexCode));
 check('有用 ctx.effect 注册生命周期（>= 2 处）', (indexCode.match(/ctx\.effect\(/g) ?? []).length >= 2, '实际 ' + (indexCode.match(/ctx\.effect\(/g) ?? []).length);
 check(

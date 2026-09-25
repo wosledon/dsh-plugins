@@ -210,7 +210,7 @@ export function createStore(ctx, rawConfig, identity) {
    * 里失败就 `return false`——于是另一条通道明明可用却从不尝试。
    * 现在两条都试，并把最终落在哪条记进 `lastChannel`，诊断时不必猜。
    */
-  async function persist() {
+  async function persistOnce() {
     if (mode === 'read-only') return false;
     const attempts = mode === 'editor'
       ? [['editor', persistViaEditor], ['settings', canMutate ? persistViaSettings : null]]
@@ -228,6 +228,26 @@ export function createStore(ctx, rawConfig, identity) {
     }
     warn(`写入配置失败（两条通道都试过）：${lastError ?? '无可用通道'}`);
     return false;
+  }
+
+  /*
+   * 写入串行化。
+   *
+   * **这是真机暴露出来的缺陷**：每次 `persist()` 都把自己那份 `internal` 快照
+   * 交给 `editor.edit()`（读-改-写）。并发写时后一次读到的 `current` 不含前一次
+   * 刚写的东西，于是先发起的写在落盘时把后发起的覆盖掉——**后写未必赢，先写可能
+   * 赢**。现象正是一次性的 `lastBoot` 留下来了，而每次心跳反复写的 `heartbeat`
+   * 从没出现过。
+   *
+   * 串成一条链后，每次写入都基于"上一次写完之后"的状态，读-改-写不再交错。
+   * 链路用 `.catch` 吞掉失败以免一个错误断掉整条链——每次调用拿到的仍是它自己
+   * 那次的结果。
+   */
+  let writeTail = Promise.resolve();
+  function persist() {
+    const next = writeTail.then(persistOnce, persistOnce);
+    writeTail = next.then(() => {}, () => {});
+    return next;
   }
 
   return {
@@ -276,6 +296,14 @@ export function createStore(ctx, rawConfig, identity) {
      */
     async setHeartbeat(ticks, lastTickAt) {
       internal = { ...internal, heartbeat: { ticks, lastTickAt } };
+      return persist();
+    },
+    /**
+     * 里程碑：只保留"最后到达的那一步"。见 `lib/config.js` 里 `traceSchema` 的
+     * 说明——一次启动就能定位停在哪，而不是每轮重启只回答一个是/否问题。
+     */
+    async setTrace(text) {
+      internal = { ...internal, trace: String(text) };
       return persist();
     },
     /**

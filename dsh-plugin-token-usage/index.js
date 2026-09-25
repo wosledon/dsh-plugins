@@ -72,6 +72,15 @@ export function apply(ctx, rawConfig) {
    * fire-and-forget：它本身失败也不能拖住装配。
    */
   void store.setLastBoot({ phase: 'enter' }).catch(() => {});
+  /*
+   * 里程碑埋点。真机排查已经花了四轮重启，每轮只能回答一个是/否问题；这一条让
+   * **一次**启动就把范围缩到一个点。`trace` 只保留最后到达的那一步，所以看到
+   * `timer:created` 却看不到 `timer:tick:1`，就等于"定时器建了但没触发"。
+   */
+  const trace = (text) => {
+    void store.setTrace(text).catch(() => {});
+  };
+  trace('apply:enter');
 
   /* 定时器心跳计数（见下方 setInterval）。 */
   let tickCount = 0;
@@ -160,8 +169,12 @@ export function apply(ctx, rawConfig) {
    * 有个可直接调用的入口就能离线断言。
    */
   async function sweep() {
+    trace('sweep:enter');
     if (!store.isPersistent()) {
       // 只读 profile：不写任何东西，但要留下可诊断的痕迹。
+      // 注意：这条分支原先**连 trace 都不写**，于是"只读模式直接返回"与
+      // "sweep 根本没被调用"在盘上完全一样——真机排查正是卡在这里。
+      trace('sweep:read-only');
       warn(ctx, '设置不可写，跳过扫描');
       return { scanned: false, reason: 'read-only' };
     }
@@ -213,32 +226,43 @@ export function apply(ctx, rawConfig) {
   ctx.effect(() => {
     const timer = setInterval(() => {
       tickCount += 1;
+      trace('timer:tick:' + tickCount);
       // 心跳写的是"定时器在转"，与 lastSweep 的"扫描跑过"是两件事：
       // 定时器可能在转而扫描一直失败，也可能两者都没跑。
       //
       // 这里**不能**用 `.catch(() => {})` 吞掉：上一轮真机排查时心跳始终不出现，
       // 而"写失败"和"回调没触发"从外面看一模一样，白白多花了一轮。
-      // 失败也要留痕（写进 lastSweep.detail，因为心跳本身写不进去时只能借它）。
       void store.setHeartbeat(tickCount, Date.now()).catch((error) => {
         warn(ctx, `心跳写入失败：${message(error)}`);
       });
       void sweep();
     }, SWEEP_MS);
-    // 不阻止进程退出：定时器只是后台补充，不是常驻理由。
-    if (typeof timer?.unref === 'function') timer.unref();
+    /*
+     * **不再 unref()。**
+     *
+     * 原先调了 `timer.unref()`，理由是"定时器只是后台补充，不是常驻理由"。
+     * 但真机现象是 5 分钟内 0 次心跳——而 `unref()` 恰好能让定时器在事件循环
+     * 上没有其它引用时**不触发**。既然这是一个需要定期续期数据的定时器，
+     * 它就应当自己维持进程存活；把"不阻止退出"写进理由，代价是它可能永远不跑。
+     */
+    trace('timer:created');
     cleanups.push(() => clearInterval(timer));
     return () => clearInterval(timer);
   }, 'token-usage: timer');
 
   // 启动即刷新一次设置快照，然后跑第一轮 sweep。
   ctx.effect(() => {
+    trace('startup:enter');
     void (async () => {
       try {
         await store.refresh();
+        trace('startup:refreshed');
         await store.setLastBoot({ phase: 'ready' }).catch(() => {});
         await sweep();
+        trace('startup:done');
       } catch (error) {
         // 失败必须留痕：否则界面只是"没数据"，而原因全在宿主里没人看得见。
+        trace('startup:failed:' + message(error));
         await store.setLastBoot({ phase: 'failed', detail: message(error) }).catch(() => {});
         warn(ctx, `启动流程失败：${message(error)}`);
       }
