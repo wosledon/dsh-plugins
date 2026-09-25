@@ -366,7 +366,22 @@ if (clientSource === undefined) {
           },
         },
         slots: {
-          inject: (key, callback) => { const disposer = callback(); return typeof disposer === 'function' ? disposer : clientDisposer; },
+          /*
+           * 回调是 **generator**（与已发布的 dsh-client-ui-sidebar-right 一致），
+           * 所以必须迭代它才会执行 `yield ctx.slots.register(...)` —— 只调
+           * `callback()` 拿到一个未启动的 generator，body 一行都不会跑，
+           * 于是"没注册任何 slot"的假失败。
+           */
+          inject: (key, callback) => {
+            const effect = callback();
+            if (effect !== null && typeof effect === 'object' && typeof effect.next === 'function') {
+              for (let step = effect.next(); step.done !== true; step = effect.next()) {
+                // 每次 next() 执行一个 yield，注册就在其中发生。
+              }
+              return clientDisposer;
+            }
+            return typeof effect === 'function' ? effect : clientDisposer;
+          },
           register: (options, component) => { clientRecord.slots.push({ options, component }); return clientDisposer; },
         },
       };

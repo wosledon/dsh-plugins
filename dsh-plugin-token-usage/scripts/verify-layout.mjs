@@ -561,7 +561,8 @@ check('会话头部席位声明 locale 命名空间（宿主据此取文案）',
 check(
   '三个席位都经 ctx.slots.inject(ownerKey, …) 注册（裸 register 会在 boot 顺序不利时抛错）',
   /const contribute = \(ownerKey, options, Component\)/.test(source)
-    && /ctx\.slots\.inject\(ownerKey, \(\) => ctx\.slots\.register\(options, Component\)\)/.test(source),
+    && /ctx\.slots\.inject\(ownerKey, function\* \(\) \{/.test(source)
+    && /yield ctx\.slots\.register\(options, Component\)/.test(source),
 );
 {
   // 注释里也提到了 register，所以先剥掉注释再数——否则会把文档当成调用。
@@ -573,8 +574,8 @@ check(
   // "每个席位都走 inject" 由构造保证，不可能漏掉其中一个。
   check('恰好 1 处 ctx.slots.inject（在 contribute 辅助函数里复用）', injectCount === 1, '实际 ' + injectCount);
   check(
-    'register 只出现在 inject 回调里（没有裸调）',
-    registerCount === 1 && /ctx\.slots\.inject\(ownerKey, \(\) => ctx\.slots\.register\(options, Component\)\)/.test(codeOnly),
+    'register 只出现在 inject 的 generator 回调里（没有裸调）',
+    registerCount === 1 && /ctx\.slots\.inject\(ownerKey, function\* \(\) \{\s*yield ctx\.slots\.register\(options, Component\);/.test(codeOnly),
     'register ' + registerCount + ' 次',
   );
   check('contribute 被调用 3 次（三个席位一个不落）', contributeCalls === 3, '实际 ' + contributeCalls);

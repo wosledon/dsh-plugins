@@ -2051,7 +2051,13 @@ window.__ModuleLoader__.load({
         const offs = [];
         const contribute = (ownerKey, options, Component) => {
           if (typeof ctx.slots?.inject !== 'function' || typeof ctx.slots?.register !== 'function') return;
-          const off = ctx.slots.inject(ownerKey, () => ctx.slots.register(options, Component));
+          // 回调写成 **generator**，与已发布的生产代码
+          // （@deepseek-ai/dsh-client-ui-sidebar-right 的 ctx.slots.inject("rightbar", function* () {…})）
+          // 逐字一致。官方 practices.md 的箭头函数写法是简写，契约里回调返回类型叫
+          // `SlotInjectionEffect`，照线上用法写最稳。
+          const off = ctx.slots.inject(ownerKey, function* () {
+            yield ctx.slots.register(options, Component);
+          });
           if (typeof off === 'function') offs.push(off);
         };
         contribute('sidebar.panellist', { name: 'sidebar.panellist', id: PANEL_ID, order: 20, label: () => t('panelLabel') }, views.PanelIcon);

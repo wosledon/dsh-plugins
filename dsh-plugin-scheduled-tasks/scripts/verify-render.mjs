@@ -189,7 +189,22 @@ const ctx = {
       return (key) => (zh[key] === undefined ? key : zh[key]);
     },
   },
-  slots: { register: (opts, comp) => { registered.push({ opts, comp }); return () => {}; }, inject: (k, cb) => cb() },
+  slots: {
+    register: (opts, comp) => { registered.push({ opts, comp }); return () => {}; },
+    /*
+     * 回调是 generator（与已发布的 dsh-client-ui-sidebar-right 一致）：必须迭代，
+     * `yield` 里的注册才会执行。只调 cb() 拿到的是未启动的 generator。
+     */
+    inject: (key, cb) => {
+      const effect = cb();
+      if (effect !== null && typeof effect === 'object' && typeof effect.next === 'function') {
+        for (let step = effect.next(); step.done !== true; step = effect.next()) {
+          // 每次 next() 执行一个 yield。
+        }
+      }
+      return () => {};
+    },
+  },
 };
 
 plugin.apply(ctx);

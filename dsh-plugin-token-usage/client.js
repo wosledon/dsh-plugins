@@ -635,7 +635,16 @@ window.__ModuleLoader__.load({
         const offs = [];
         const contribute = (ownerKey, options, Component) => {
           if (typeof ctx.slots?.inject !== 'function' || typeof ctx.slots?.register !== 'function') return;
-          const off = ctx.slots.inject(ownerKey, () => ctx.slots.register(options, Component));
+          // 回调写成 **generator** 而不是箭头函数。
+          //
+          // 官方 practices.md 写的是 `() => ctx.slots.register(...)`，但已发布的生产
+          // 代码（@deepseek-ai/dsh-client-ui-sidebar-right）用的是 generator：
+          //   ctx.slots.inject("rightbar", function* () { yield ctx.slots.register({...}, C); });
+          // 而契约里回调的返回类型叫 `SlotInjectionEffect`——既然线上用的是 generator，
+          // 就照它写，不赌箭头返回 disposer 也能被接受。
+          const off = ctx.slots.inject(ownerKey, function* () {
+            yield ctx.slots.register(options, Component);
+          });
           if (typeof off === 'function') offs.push(off);
         };
         contribute('sidebar.panellist', { name: 'sidebar.panellist', id: PANEL_ID, order: 30, label: () => t('panelLabel') }, PanelIcon);
