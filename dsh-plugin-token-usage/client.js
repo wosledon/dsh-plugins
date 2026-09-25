@@ -931,6 +931,21 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 窗口总跨度的上限（天，含首尾）。
+     *
+     * 为什么 `clampRange` 需要一个**上界**：下界放开之后（空日期必须能被画出来），
+     * 手打一个 `2020-01-01` 就会得到一张横跨六年的网格——几千个格子、横向滚动几分钟
+     * 看不完，而且没有任何一格能提供信息。所以"放开下界"必须配一个"跨度上限"：
+     * 窗口由用户选，但选不出比一年还长的窗口。
+     *
+     * 366 = 闰年的天数，取它是因为窗口可能整段落在闰年里（`2024-01-01` 起的一年）；
+     * 取 365 会把闰年的整年窗口无故削掉一天。宿主侧 `TIMELINE_MAX_DAYS` 只有 90 天，
+     * 所以这个上界在真实数据下**永远不会**被触发——它是给"手打一个远古日期"兜底的，
+     * 不是给正常数据用的。
+     */
+    const MAX_RANGE_DAYS = 366;
+
+    /**
      * 默认区间 = **数据末尾往前 span 天**（含首尾）。
      *
      * 两个刻意的选择，都有负向对照钉住：
@@ -938,8 +953,18 @@ window.__ModuleLoader__.load({
      *   1. 锚点是"数据里最晚的那一天"，**不是今天**。这份 timeline 是宿主扫描历史日志
      *      的产物，可能已经陈旧；用今天当锚点会在数据末尾之后画出一大片空白列
      *      （看起来像图坏了）。"最近一个月"要表达的从来是"数据里的最近一个月"。
-     *   2. 窗口被数据边界夹住：总跨度不足 span 天时用实际跨度，**不补出无数据的空列**
-     *      ——空列与"这天没用过"在图上长得一模一样，凭空多出来的列等于谎报统计范围。
+     *   2. 窗口**一律给满 span 天**，不从数据起点收缩：真机上 timeline 只有
+     *      `2026-09-18` 与 `2026-09-25` 两天，旧写法把窗口收缩到这两天，网格就只有
+     *      2 列——用户看到的是"没铺满"，问的是"没有的日期也要展示呀"。
+     *
+     * 为什么"没数据的日期"必须画出来（这是热力图的本意，不是谎报）：
+     * 空格子表达的是**"这天没有用量"**，而"哪几天断过"正是这张图要传达的第一条信息。
+     * 窗口必须由**"这段时间"**决定（用户选的、或默认的最近一个月），而不是由
+     * "碰巧有数据的那几天"决定；后者会让"这段时间里断了一段"和"这段时间没有数据"
+     * 长得一模一样。补 0 的格子由 `padRangeToDays` 落到窗口的每一天上。
+     *
+     * 窗口整体仍然不会越出数据末尾（`to` 就是数据最晚那天）：往未来补空格子才是
+     * 真的谎报统计范围——那部分不是"没用过"，是"还没发生"。
      *
      * 空 / 坏 / 乱序输入一律返回 `{ from: null, to: null }`（= 两端不限制），不抛。
      */
@@ -947,17 +972,17 @@ window.__ModuleLoader__.load({
       const bounds = dataBounds(days);
       if (bounds.maxDate === null) return { from: null, to: null };
       const width = Number.isFinite(span) && span >= 1 ? Math.floor(span) : DEFAULT_RANGE_DAYS;
-      const start = shiftDay(bounds.maxDate, -(width - 1));
-      // 窗口起点早于数据起点时用数据起点：不造无数据的空列。
-      const from = start.getTime() < bounds.minDate.getTime() ? bounds.minKey : dayKey(start);
-      return { from, to: bounds.maxKey };
+      // 起点只由锚点与天数决定，**不夹到数据最早那天**：数据跨度不足 width 天时
+      // 照样给满窗口，前面那几天作为补 0 的格子画出来（理由见上面第 2 条）。
+      return { from: dayKey(shiftDay(bounds.maxDate, -(width - 1))), to: bounds.maxKey };
     }
 
     /**
-     * 把区间夹到**数据的实际范围**里，返回 `{ from, to, clamped }`。
+     * 把区间夹到**数据范围 + 跨度上限**里，返回 `{ from, to, clamped }`。
      *
      * `clamped` 的定义只有一条：**返回值与输入的可解析端点不同**（含"不限制被解析成
-     * 数据边界"）。界面据此决定"要不要告诉用户范围被改过"，不必自己再比一遍。
+     * 数据边界"、含被跨度上限削掉的那一端）。界面据此决定"要不要告诉用户范围被改过"，
+     * 不必自己再比一遍。
      *
      * 规则，每条都有断言（verify-layout.mjs 第 8.f 组）：
      *   1. 端点是空串 / null / 坏日期 → 该端**不限制**，解析为数据边界（from → 最早那天，
@@ -965,10 +990,23 @@ window.__ModuleLoader__.load({
      *      Invalid Date，再参与比较就全是 false，图会变成一片空白而不报错。
      *   2. `from > to` 时**交换两端**，而不是退化成单天：用户把两端填反了，但那个窗口
      *      本身是有意义的；退化成单天会静默丢掉一半数据。
-     *   3. 两端都夹进 [最早, 最晚]：手打 2030 年不会画出一张横跨几年的空格子图。
-     *   4. 返回值一律是 canonical `YYYY-MM-DD` 或 null（理由见 `dataBounds`）。
-     *   5. 数据里一条可用日期都没有时返回 `{from:null,to:null}`：没有边界可夹，
+     *   3. `to` 夹进 `[数据最早, 数据最晚]`：未来没有数据，画到未来去没意义，也没法
+     *      夹到"数据最早那天"以下（否则窗口会是负的）。
+     *   4. **`from` 早于数据最早那天时保留，不再夹回**——这是"没有的日期也要展示"
+     *      能成立的关键：09-01~09-17 在真机数据里没有记录，但它们必须作为补 0 的
+     *      格子出现在窗口里。夹回数据起点会让窗口退化成"只有有数据的那几天"，
+     *      热力图就重新变成"铺不满"的样子。
+     *   5. 但 `from` 不能被放开到无限早：窗口总跨度不得超过 `MAX_RANGE_DAYS`
+     *      （366 天），超了就**只把 `from` 往后推**到 `to - 366 天`。手打
+     *      `2020-01-01` 因此得到的是一个一年宽的窗口，而不是横跨六年的网格。
+     *   6. 返回值一律是 canonical `YYYY-MM-DD` 或 null（理由见 `dataBounds`）。
+     *   7. 数据里一条可用日期都没有时返回 `{from:null,to:null}`：没有边界可夹，
      *      不能凭空造一个（也不能退到 1970）。
+     *
+     * **顺序是有意为之，不能换**：先交换、再解析 `to`、再解析 `from`、最后施加跨度上限。
+     * `to` 必须先于 `from` 解析完，因为跨度上限要用 `to` 当基准去推 `from`。第一版把
+     * 跨度检查写在两端解析之前，而那时 `toDate` 还可能因为"该端不限制"而是 `null`，
+     * `.getTime()` 当场抛 `TypeError` —— 一个合法输入把整块图炸掉。
      */
     function clampRange(range, days) {
       const bounds = dataBounds(days);
@@ -991,15 +1029,81 @@ window.__ModuleLoader__.load({
         return { from: null, to: null, clamped };
       }
 
-      if (fromDate === null) { fromDate = bounds.minDate; clamped = true; }
-      else if (fromDate.getTime() < bounds.minDate.getTime()) { fromDate = bounds.minDate; clamped = true; }
-      else if (fromDate.getTime() > bounds.maxDate.getTime()) { fromDate = bounds.maxDate; clamped = true; }
-
+      /* ---- 先解析 `to`（上界仍然是数据范围） ---- */
       if (toDate === null) { toDate = bounds.maxDate; clamped = true; }
       else if (toDate.getTime() > bounds.maxDate.getTime()) { toDate = bounds.maxDate; clamped = true; }
       else if (toDate.getTime() < bounds.minDate.getTime()) { toDate = bounds.minDate; clamped = true; }
 
+      /* ---- 再解析 `from`：只在"不限制"时落到数据最早那天，早于它的一律保留 ---- */
+      if (fromDate === null) { fromDate = bounds.minDate; clamped = true; }
+      // 晚于 `to` 的 `from`（例如手打 2030，而 `to` 已夹到数据末尾）仍然要收回，
+      // 否则窗口会是负的。这里以**已经解析好的 `to`** 为界，不以数据末尾为界。
+      else if (fromDate.getTime() > toDate.getTime()) { fromDate = toDate; clamped = true; }
+
+      /* ---- 最后施加跨度上限：只动 `from`，因为 `to` 已经不可能越界 ---- */
+      const span = Math.round((toDate.getTime() - fromDate.getTime()) / 86400000);
+      if (span > MAX_RANGE_DAYS) {
+        fromDate = shiftDay(toDate, -MAX_RANGE_DAYS);
+        clamped = true;
+      }
+
       return { from: dayKey(fromDate), to: dayKey(toDate), clamped };
+    }
+
+    /**
+     * 把**一个窗口**里的每一天补齐成一条 timeline，供 `heatmapGeometry` 算几何。
+     *
+     * 为什么需要它：`heatmapGeometry` 是从传入数组的 min/max 推网格跨度的，而
+     * `filterTimeline` 只返回**有数据**的那几天。直接把过滤结果喂进去，网格就只
+     * 覆盖"碰巧有数据的那几天"——真机数据只有两天时无论窗口设多宽都只有 2 列，
+     * 窗口里没数据的日期根本没被喂进网格（用户的原话：**"不是铺满的吗，没有的
+     * 日期也要展示呀"**）。补满窗口之后 min/max 就等于窗口两端，空格子自然铺满。
+     *
+     * 语义要点：
+     *   - 有数据的日期用**实际值**（保留原对象引用，`heatmapGeometry` 会自己取和），
+     *     没有数据的补 `{ day, total: 0, attempts: 0, buckets: {} }`——`total: 0` 的
+     *     语义正是"这天没有用量"，与 `heatmapGeometry` 里补 0 的分支完全一致。
+     *   - 窗口里**一天用量都没有**时**不补**：整段空窗必须继续走空态文案而不是画一片
+     *     同色方块（这是既有且有断言的行为）。
+     *   - 端点不可解析 / `from > to` / 输入非数组 → **原样返回，不抛**：降级到旧行为
+     *     （按数据跨度画），总比整块图消失好。
+     *   - 循环次数由 `MAX_RANGE_DAYS` 兜底：`from`/`to` 之间即使出现夏令时导致的
+     *     25 小时日，逐日推也只多推一天，不会变成死循环。
+     */
+    function padRangeToDays(days, range) {
+      const list = Array.isArray(days) ? days : [];
+      // 空输入不补：空态由渲染层判（"这段时间没有用量"和"这段时间没数据"都要走空态）。
+      if (list.length === 0) return list;
+      const source = isObject(range) ? range : {};
+      const fromDate = parseDay(source.from);
+      const toDate = parseDay(source.to);
+      // 端点不可解析 / 顺序反了：原样返回，让调用方看到输入本来的样子。
+      if (fromDate === null || toDate === null || fromDate.getTime() > toDate.getTime()) return list;
+
+      const byDay = new Map();
+      for (const point of list) {
+        if (!isObject(point)) continue;
+        const date = parseDay(point.day);
+        // 没有可解析日期的条目（坏 day / 缺 day）不进 map：与 filterTimeline 同口径丢掉。
+        if (date === null) continue;
+        const day = dayKey(date);
+        if (!byDay.has(day)) byDay.set(day, point);
+      }
+
+      const out = [];
+      /*
+       * 逐日推用 `shiftDay`（内部走 `new Date(y, m, d + n)` 的本地日期运算），
+       * **不用 `+ 86400000`**：夏令时切换那天是 23/25 小时，按毫秒加会让窗口整体
+       * 慢/快一天，最后一天直接漏掉。上限 `MAX_RANGE_DAYS + 1` 是防御性兜底
+       * （正常情况下 `clampRange` 已经保证跨度 ≤ MAX_RANGE_DAYS）。
+       */
+      for (let index = 0; index <= MAX_RANGE_DAYS; index += 1) {
+        const date = shiftDay(fromDate, index);
+        if (date.getTime() > toDate.getTime()) break;
+        const day = dayKey(date);
+        out.push(byDay.get(day) ?? { day, total: 0, attempts: 0, buckets: {} });
+      }
+      return out;
     }
 
     /**
@@ -1188,6 +1292,8 @@ window.__ModuleLoader__.load({
      *
      * 相对上一版多了两件事：
      *   - **区间**：默认只画**数据末尾往前 30 天**，上方给两个日期输入与三个预设；
+     *     窗口内的**每一天都有格子**（没数据的补 0），所以窗口有多宽，图就有多满——
+     *     这条是被真机逼出来的：数据只有两天时旧写法只画出 2 列，看起来像"没铺满"；
      *   - **自绘 tooltip**：原生 `title` 的样式由系统渲染、无法用 CSS 定制，真机反馈
      *     "tooltip 样式和应用不一致"，所以换成自己画的浮层；格子保留 `aria-label`，
      *     无障碍不退化，且**不再有 title**（两者并存会同时弹出两个）。
@@ -1200,9 +1306,10 @@ window.__ModuleLoader__.load({
      *     而两者含义相反；
      *   - **区间里一天用量都没有**：同上走空态文案，但**控件必须留着**，
      *     否则用户被锁在没有数据的区间里、连把范围改回去的入口都没有；
-     *   - **只有一天 / 只有一两列**：照常画**一列**（周日起到周六 7 个格子，1 格有量、
-     *     6 格补 0）。这一点是真机数据逼出来的：宿主只给"有用量的天"，
-     *     实测就可能是孤零零的一天，而区间收窄到 1~7 天时列数也只有 1~2 列。
+     *   - **只有一天 / 只有一两列**：照常画出来。窗口铺满之后，"一天数据"得到的是
+     *     **整个窗口**（默认 30 天 = 5 列：1 格有量、其余补 0），而不是孤零零一列——
+     *     这正是用户要的"没有的日期也要展示"。窗口本身收窄到 1~7 天时列数才是 1~2 列，
+     *     那时补 0 的格子仍然照画。
      *
      * 参数用**选项对象**而不是继续加位置参数：区间与 tooltip 各是一对值 + 一对回调，
      * 六个位置参数在调用处已经看不出谁是谁，将来再加一项还要改掉所有调用点。
@@ -1218,7 +1325,20 @@ window.__ModuleLoader__.load({
        */
       const typed = isObject(opts.range) ? opts.range : null;
       const clamped = clampRange(typed === null ? defaultRange(list) : typed, list);
-      const geometry = heatmapGeometry(filterTimeline(list, clamped));
+      /*
+       * **必须先把窗口补满再算几何。**
+       *
+       * `heatmapGeometry` 从传入数组的 min/max 推网格跨度，而 `filterTimeline` 只返回
+       * **有数据**的那几天——直接喂进去，网格就只覆盖"碰巧有数据的那几天"：真机数据
+       * 只有 2026-09-18 与 2026-09-25 两天时，无论窗口设多宽，网格永远只有 2 列，
+       * 窗口里没数据的日期（09-01~09-17）根本没被喂进来。补满之后 min/max 就等于
+       * 窗口两端，空格子自然铺满整个窗口。
+       *
+       * 窗口两端**之外**的格子仍然由 `heatmapGeometry` 原有的 `null` 占位处理
+       * （渲染层遇到 null 不渲染），语义不变：列仍然对齐到周，只是区间起点从
+       * "最早的数据"变成了"窗口的起点"。
+       */
+      const geometry = heatmapGeometry(padRangeToDays(filterTimeline(list, clamped), clamped));
       const tip = isObject(opts.tip) ? opts.tip : null;
       const onTipChange = typeof opts.onTipChange === 'function' ? opts.onTipChange : null;
       const controls = heatControls(list, t, clamped, typed, opts.onRangeChange);
@@ -2040,15 +2160,18 @@ window.__ModuleLoader__.load({
       shortDay,
       heatmapGeometry,
       /*
-       * 区间的三个纯函数。它们的错误同样"不报错只撒谎"：
+       * 区间的四个纯函数。它们的错误同样"不报错只撒谎"：
        * 默认窗口锚错地方（锚到今天而不是数据末尾）会在陈旧数据上画一片空白；
-       * 夹取漏了会让手打 2030 年的人得到一张横跨几年的空格子图；
-       * 空串没被当成"不限制"则会算出 NaN 日期，图整个消失。只有把这三个函数取出来
+       * 默认窗口跟着数据起点收缩会让网格"铺不满"（真机上只有 2 天数据 → 永远 2 列）；
+       * 夹取漏了会让手打 2030 年的人得到一张横跨几年的空格子图，而下界夹太紧又会把
+       * "这天没有用量"的空格子整段吃掉；
+       * 空串没被当成"不限制"则会算出 NaN 日期，图整个消失。只有把这四个函数取出来
        * 跑真实输入（空数组 / 单天 / 跨度不足 30 天 / 超一年 / from>to / 空串 / 乱序）
        * 才能钉住。
        */
       defaultRange,
       clampRange,
+      padRangeToDays,
       filterTimeline,
       donutSegments,
       /*

@@ -39,8 +39,16 @@ the browser side cannot compute by itself.
   language. The heatmap opens on the **last 30
   days of the data** — anchored at the latest day *in the data*, not at today, because a stale
   timeline would otherwise be rendered as a band of empty columns — and carries a date-range control:
-  two date inputs plus `Last 7 days` / `Last 30 days` / `All` presets. Whatever you type is **clamped
-  to the data's real span and written back into the input** (what the box shows is what the chart
+  two date inputs plus `Last 7 days` / `Last 30 days` / `All` presets. The window does **not shrink
+  to the data's start**: every day of the window occupies a cell (dataless days are padded with 0),
+  so two days of data still draw a full 30-day window (5 columns, 35 cells) instead of a lone two.
+  A padded cell says **"no usage that day"** — which is exactly what a heatmap is for (seeing which
+  days had a gap), not a false claim; the window is decided by *the period*, never by *the days that
+  happen to have data*. `to` is **clamped to the end of the data** (drawing into the future is the
+  real false claim — that is "not yet", not "unused"), while `from` **earlier than the data is kept**
+  (otherwise the dataless days get eaten again), except that the whole window may not span more than
+  **366 days** (typing 2020 yields a one-year window, not a six-year grid). Clamped values are
+  **written back into the input** (what the box shows is what the chart
   draws); clearing an input means "no limit on that end". Hovering or focusing a cell shows a
   **custom overlay** instead of the native `title` (the native tooltip's styling is rendered by the
   OS and cannot be customised with CSS); the cell keeps its `aria-label`, so accessibility does not
@@ -240,7 +248,7 @@ again. If the profile cannot persist settings, the button is disabled and says s
 ```powershell
 node scripts/test-fold.mjs        # all passed: 81 assertions
 node scripts/test-summary.mjs     # all passed: 35 assertions
-node scripts/verify-layout.mjs    # all passed: 282 layout and structure assertions
+node scripts/verify-layout.mjs    # all passed: 304 layout and structure assertions
 node scripts/verify-contract.mjs  # all passed: 292 assembly-shape assertions
 ```
 
@@ -276,17 +284,32 @@ documented `box-shadow` exception), no `word-break: break-all`, that the root **
 whose violation blanks the whole slot with React #310.
 
 The chart maths is asserted by **running** it, not by pattern-matching the source, because a
-wrong chart renders happily and only lies. Two heatmap properties in particular are pinned:
-the columns must line up with calendar weeks (the grid starts on the Sunday of the earliest
-day's week, so every cell's row equals its real `getDay()`), and the intensity must occupy
-four tiers of one hue (a negative control that collapses it to `total > 0 ? 4 : 0` turns the
-suite red).
+wrong chart renders happily and only lies. Three heatmap properties in particular are pinned:
+the columns must line up with calendar weeks (the grid starts on the Sunday of the window's
+first day, so every cell's row equals its real `getDay()`), the intensity must occupy four
+tiers of one hue (a negative control that collapses it to `total > 0 ? 4 : 0` turns the suite
+red), and the grid must be **filled out to the window** rather than to the data's span — the
+assertion computes a definite number (the whole weeks the window covers × 7, plus the five
+legend swatches: a 30-day window is 5 columns = 35 cells + 5 = 40 cell nodes) instead of the
+unenforceable "greater than zero". Removing that padding step inside `renderHeatmap`
+(negative control A) turns the "three days of data still fill five columns" assertion red.
 
 The date range is pinned the same way: the default window is anchored at the latest day **in the
-data** (a negative control that anchors it at today turns the suite red), a typed date is clamped to
-the data's real span and written back into the input, `from > to` swaps the two ends instead of
-collapsing to a single day, an empty input means "unbounded" rather than a `NaN` date, and a range
-with no usage keeps the range controls on screen so the empty state is never a dead end. The custom
+data** (a negative control that anchors it at today turns the suite red), the window does **not**
+shrink to the data's start (negative control B clamps `from` back to the earliest day and turns the
+"three days of data still fill a 30-day window" assertion red), `to` is clamped to the latest day
+while **`from` earlier than the data is kept** (otherwise the dataless days get eaten again), the
+total window span may not exceed 366 days (beyond that only `from` is pushed to `to − 366 days`),
+a typed date is written back into the input, `from > to` swaps the two ends instead of
+collapsing to a single day, an empty input means "unbounded" (`from: null` still resolves to the
+earliest day — the "all" preset relies on this) rather than a `NaN` date, and a range
+with no usage keeps the range controls on screen so the empty state is never a dead end.
+`padRangeToDays`, the pure function that fills the window, has its own group: empty input is left
+alone, single day, month crossing, year crossing, leap day, `from > to` / unparseable ends /
+non-object range return the input unchanged without throwing, bad entries are dropped, a window
+never repeats or skips a day, a six-year-wide window is bounded by the loop guard (at most
+`MAX_RANGE_DAYS + 1` entries), and filling the window makes the geometry span the **window**
+(2 days of data + a 30-day window → 5 columns and 35 cells, versus 1 column without it). The custom
 tooltip is pinned too: it must not live inside the horizontally scrolling container (which would clip
 it), cells must carry `aria-label` and **no** `title` (keeping both shows two tooltips at once), and
 its position is clamped inside the card.

@@ -15,10 +15,17 @@
  *      强度必须分四档、环形图分母是 grandTotal、缺 timeline / 单天 / 全零时的降级——
  *      这些错了都不报错，只是画出一张撒谎的图，正则看不见）。
  *      其中 8.f / 8.g 两组是后加的两件事，同样只能靠"跑"：
- *      - **日期区间**（默认窗口锚在数据末尾而不是今天、输入被夹到数据边界并写回输入框、
- *        空串 = 该端不限制、from>to 交换、区间内无数据时空态保留控件）；
+ *      - **日期区间**（默认窗口锚在数据末尾而不是今天、窗口**不按数据起点收缩**而是铺满、
+ *        `from` 早于数据起点时保留、跨度上限 366 天、输入被夹到数据边界并写回输入框、
+ *        空串 = 该端不限制、from>to 交换、区间内无数据时空态保留控件，
+ *        以及 `padRangeToDays` 这个补窗纯函数的逐日补齐 / 跨月跨年跨闰日 / 循环次数保护）；
  *      - **自绘 tooltip**（不能放进横向滚动容器里、格子上不能有原生 title 但必须有
  *        aria-label、pointer-events:none、位置夹在卡片内、键盘可达）。
+ *
+ * 「窗口铺满」是 8.f 里最容易静默出错的一条：`heatmapGeometry` 从传入数组的 min/max
+ * 推网格跨度，而 `filterTimeline` 只返回有数据的那几天——少了补窗那一步，真机上
+ * 两天数据无论窗口设多宽都只画出 2 列，图"没铺满"却不报任何错。所以格子数断言写成
+ * **确定的期望值**（窗口覆盖的整周数 × 7 + 图例 5），不用"大于 0"这种没有约束力的形式。
  *
  * 第 8 组是唯一会**执行**被检代码的一组，桩与 verify-contract.mjs 保持一致：
  * 同一份 client.js 被两个脚本用不同的桩跑，会让"这里过那里不过"变成常态。
@@ -1508,6 +1515,42 @@ function countClass(node, pattern) {
 /** 与组件里同一个 t：键→中文，用于结构检查时占位符能真的被替换掉。 */
 const tFor = (key) => (valueOf(zhBody, key) ?? key);
 
+/**
+ * 把一个窗口 `{from,to}` 覆盖的**整周数**算出来——即热力图实际会画出的列数。
+ *
+ * 起点是"from 所在周的周日"、终点是"to 所在周的周六"，所以
+ * `列数 = ⌈(终点 − 起点) / 7 天⌉`。这与 `heatmapGeometry` 内部那条算式是同一个，
+ * 只是这里用**窗口**而不是数据来算——而"窗口决定列数"正是这次要钉住的新语义。
+ */
+const weeksInWindow = (from, to) => {
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  const start = new Date(fy, fm - 1, fd);
+  const end = new Date(ty, tm - 1, td);
+  const sunday = new Date(start.getFullYear(), start.getMonth(), start.getDate() - start.getDay());
+  const saturday = new Date(end.getFullYear(), end.getMonth(), end.getDate() + 6 - end.getDay());
+  return Math.ceil((saturday - sunday) / 86400000 / 7);
+};
+
+/**
+ * 期望的**网格格子数**：整个窗口铺满（窗口覆盖的整周数 × 7）。
+ *
+ * 这是"网格按窗口铺开"的量化形式。调用方一律传一个**具体的窗口**（`{from,to}`），
+ * 由 `clampRange` 夹出来的那个——所以"期望"与"实现"用的是同一个窗口定义，
+ * 而格子数本身由 `weeksInWindow` 独立算一遍，不是从渲染结果反推的常数。
+ */
+const windowGridCells = (range) => {
+  if (range === null || range === undefined || range.from === null || range.to === null) return NaN;
+  return weeksInWindow(range.from, range.to) * 7;
+};
+
+/**
+ * 一个窗口覆盖多少列——就是渲染层写进 `--stu-heat-weeks` 的那个数。
+ * 断言列数时用它，免得在断言里手抄 `35 / 7` 这种算式。
+ */
+const columnsInWindow = (range) => windowGridCells(range) / 7;
+
+
 if (renderDonutFn !== null && renderHeatmapFn !== null) {
   const pageRows = [
     { key: 'a', provider: 'p1', model: 'm1', total: 60 },
@@ -1570,14 +1613,22 @@ if (renderDonutFn !== null && renderHeatmapFn !== null) {
   ];
   const heatTree = renderHeatmapFn(manyPoints, tFor);
   /*
-   * 格子数：3 天都在同一周（06-01 周一 ~ 06-03 周三），所以网格正好一个 7 格的一列
-   * （4 格由"区间内补 0"填上），再加上图例里的 5 个色块。
-   * `heatTree` 是唯一的输入，几何与渲染因此必须同时对得上——只对一边就会红。
+   * 格子数：**窗口铺满**的结果，与数据只有几天无关。
+   *
+   * 窗口来自 `defaultRange(manyPoints)` = 数据最晚那天（2026-06-03）往前 30 天
+   * = `2026-05-05 .. 2026-06-03`（第 8.f 组直接钉这个窗口的取值），覆盖 5 个整周
+   * → 5 × 7 = 35 个网格格子，再加上图例里的 5 个色块 = 40 个 `.stu-heatCell`。
+   *
+   * 这组数字刻意写成**确定的期望值**而不是"大于 0"：改成"大于 0"之后，把窗口补满
+   * 那一步删掉（退回按数据跨度画，3 天 = 1 列 = 7 格）也照样通过，断言就失去了约束力。
+   * 35 也不是手抄的常数：`windowGridCells` 按"整周数 × 7"独立算一遍（负向对照 A 钉它）。
    */
   check(
-    '热力图渲染出整列 7 格 + 图例 5 个色块（区间内补 0 的天也渲染）',
-    countClass(heatTree, /stu-heatCell/) === 7 + 5,
-    'heatCell 节点 ' + countClass(heatTree, /stu-heatCell/),
+    '热力图渲染出**整个窗口**的格子 + 图例 5 个色块（窗口 2026-05-05..2026-06-03 → 5 列 = 35 格）',
+    countClass(heatTree, /stu-heatCell/) === 35 + 5
+      && countClass(heatTree, /stu-heatCell/) === windowGridCells({ from: '2026-05-05', to: '2026-06-03' }) + 5,
+    'heatCell 节点 ' + countClass(heatTree, /stu-heatCell/)
+      + '；按窗口算应为 ' + windowGridCells({ from: '2026-05-05', to: '2026-06-03' }) + ' + 5',
   );
   check(
     '顶部月份标签只在新月份的第一列出现（其余列是空标签）',
@@ -1609,8 +1660,9 @@ if (renderDonutFn !== null && renderHeatmapFn !== null) {
     })(),
   );
   check(
-    '列数写进 CSS 变量 --stu-heat-weeks（渲染树里能读到，53 列时列宽才固定）',
-    typeof findByClass(heatTree, /stu-heatInner/, [])[0]?.props?.style?.['--stu-heat-weeks'] === 'string',
+    '列数写进 CSS 变量 --stu-heat-weeks（渲染树里能读到；列宽靠它固定，不被压缩）',
+    findByClass(heatTree, /stu-heatInner/, [])[0]?.props?.style?.['--stu-heat-weeks'] === '5',
+    '实际 ' + findByClass(heatTree, /stu-heatInner/, [])[0]?.props?.style?.['--stu-heat-weeks'],
   );
   /*
    * 只查 `stu-heatBody` 里的格子：图例也用 `.stu-heatCell`（尺寸与网格严格一致，
@@ -1618,7 +1670,7 @@ if (renderDonutFn !== null && renderHeatmapFn !== null) {
    */
   const gridCells = findByClass(findByClass(heatTree, /stu-heatBody/, [])[0] ?? [], /stu-heatCell/, []);
   /*
-   * 这条原来是「每格都带 title」。
+   * 这一条原来是「每格都带 title」。
    *
    * 改成自绘 tooltip 之后，断言**不能只把 title 换成别的属性了事**——真正的回归
    * 风险有两个，两个都要钉：
@@ -1626,10 +1678,13 @@ if (renderDonutFn !== null && renderHeatmapFn !== null) {
    *   2. 只加自绘浮层、**忘了删 title**，于是原生与自绘同时弹出两个 tooltip
    *      （一个系统样式、一个应用样式），比原来更糟。
    * 所以同一批格子上：aria-label 必须在，title 必须不在。
+   *
+   * 格子数从 7 变成 35：窗口铺满之后，"3 天数据"得到的是整个 30 天窗口（5 列），
+   * 不再只有那 3 天所在的一列。
    */
   check(
     '每格改带 aria-label（日期 + 数值；只靠颜色读不出具体哪天多少），且不再有 title',
-    gridCells.length === 7
+    gridCells.length === 35
       && gridCells.every((node) => typeof node.props['aria-label'] === 'string'
         && node.props['aria-label'].includes('token'))
       && gridCells.every((node) => node.props.title === undefined),
@@ -1646,17 +1701,71 @@ if (renderDonutFn !== null && renderHeatmapFn !== null) {
     gridCells.every((node) =>
       typeof node.props.style?.gridColumn === 'string' && typeof node.props.style?.gridRow === 'string'),
   );
+  /*
+   * 窗口铺满之后，网格里的格子**全部落在窗口覆盖的整周里**：窗口内的 30 天（3 天有量
+   * + 27 天补 0）都渲染成格子，再往外由 `heatmapGeometry` 补成整周（首列从 05-03 周日起、
+   * 末列到 06-06 周六止）——那 5 个整周之外的格子是 `null`，**不渲染**。
+   * 所以网格格子数正好是 5 × 7 = 35。
+   *
+   * 判据用"每个格子都有 day"而不是"day 落在 [窗口起点, 窗口终点] 内"：
+   * 05-03 / 05-04 / 06-04..06-06 这 5 天在**整周对齐**之后也必须有格子（它们的
+   * `total` 是 0，语义是"这周里这天也没用量"）；把它们错当成"区间外"而不渲染，
+   * 网格就会缺角、`grid-column` 也就不再连续。窗口**之外**（05-03 之前、06-06 之后）
+   * 的格子才是 null、才不渲染。
+   */
   check(
-    '网格整列 7 格都渲染（区间内补 0 的天也在），null 占位格不渲染',
-    countClass(heatTree, /stu-heatCell/) === 7 + 5,
-    'heatCell 节点 ' + countClass(heatTree, /stu-heatCell/),
+    '网格按窗口铺开：35 格全部落在窗口覆盖的 5 个整周内，null 占位格不渲染',
+    countClass(heatTree, /stu-heatCell/) === 35 + 5
+      && gridCells.length === 35
+      && gridCells.every((node) => typeof node.props.key === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(node.props.key))
+      && gridCells.every((node) => node.props.key >= '2026-05-03' && node.props.key <= '2026-06-06')
+      && new Set(gridCells.map((node) => node.props.key)).size === 35,
+    'heatCell 节点 ' + countClass(heatTree, /stu-heatCell/) + '，网格 ' + gridCells.length + ' 格'
+      + '，窗口外的格子 ' + gridCells.filter((node) => !(node.props.key >= '2026-05-03'
+        && node.props.key <= '2026-06-06')).length + ' 个',
+  );
+
+  /*
+   * 补 0 的格子必须**带 data-level="0"**，不能因为"反正是空的"就省掉属性。
+   *
+   * 原写法是 `every(...)`：`gridCells` 一旦是空数组，`every` 恒真——空网格也能通过，
+   * 这正是"没有约束力"的断言。这里把"确实有一批补 0 格"钉住：整周对齐之后
+   * 35 格里有 32 格没有用量（27 天窗口内补 0 + 05-03/05-04 两个周日周六的补 0），
+   * 只有 3 个有量的格子是 level ≥ 1。
+   * （`data-level` 只会是字符串，原写法里那个 `number` 分支是永远为假的死条件。）
+   */
+  check(
+    '补 0 的格子带 data-level="0"（35 格里 32 格无量、3 格有量，缺一个属性就会掉色）',
+    gridCells.filter((node) => node.props['data-level'] === '0').length === 32
+      && gridCells.filter((node) => Number(node.props['data-level']) > 0).length === 3
+      && gridCells.filter((node) => node.props['data-level'] === undefined).length === 0,
+    'level0 格 ' + gridCells.filter((node) => node.props['data-level'] === '0').length
+      + ' 个，level>0 格 ' + gridCells.filter((node) => Number(node.props['data-level']) > 0).length
+      + ' 个，缺 data-level ' + gridCells.filter((node) => node.props['data-level'] === undefined).length + ' 个',
   );
 
   const singleTree = renderHeatmapFn([{ day: '2026-06-05', total: 42 }], tFor);
+  /*
+   * 单天现在画出的是**整个默认窗口**（2026-05-07 .. 2026-06-05，5 列 = 35 格），
+   * 而不是"那一天的 1 列 7 格"：这正是用户要的"没有的日期也要展示"。
+   * 1 格有量（06-05，level 4）+ 34 格补 0（level 0），加图例 5 个色块 = 40。
+   */
   check(
-    '单天时也画出一列（1 个数据格 + 6 个补 0 格，加上图例 5 个色块）',
-    countClass(singleTree, /stu-heatCell/) === 7 + 5 && !hasClass(singleTree, /stu-heatEmpty/),
-    'heatCell 节点 ' + countClass(singleTree, /stu-heatCell/),
+    '单天时画出整个窗口（1 个数据格 + 34 个补 0 格 = 5 列，加图例 5 个色块）',
+    (() => {
+      const inner = findByClass(singleTree, /stu-heatInner/, [])[0];
+      const cells = findByClass(findByClass(singleTree, /stu-heatBody/, [])[0] ?? {}, /stu-heatCell/, []);
+      return inner?.props?.style?.['--stu-heat-weeks'] === '5'
+        && cells.length === 35
+        && cells.filter((node) => node.props['data-level'] === '4').length === 1
+        && cells.filter((node) => node.props['data-level'] === '0').length === 34
+        && cells.some((node) => node.props.key === '2026-06-05' && node.props['data-level'] === '4');
+    })()
+      && countClass(singleTree, /stu-heatCell/) === windowGridCells({ from: '2026-05-07', to: '2026-06-05' }) + 5
+      && countClass(singleTree, /stu-heatCell/) === 35 + 5
+      && !hasClass(singleTree, /stu-heatEmpty/),
+    'heatCell 节点 ' + countClass(singleTree, /stu-heatCell/) + '，列数 '
+      + (findByClass(singleTree, /stu-heatInner/, [])[0]?.props?.style?.['--stu-heat-weeks'] ?? '(无)'),
   );
   const zeroTree = renderHeatmapFn([{ day: '2026-06-01', total: 0 }, { day: '2026-06-02', total: 0 }], tFor);
   check(
@@ -1737,9 +1846,11 @@ if (internals !== null && typeof internals.heatmapGeometry === 'function') {
 const defaultRangeFn = need('defaultRange');
 const clampRangeFn = need('clampRange');
 const filterTimelineFn = need('filterTimeline');
+const padRangeToDaysFn = need('padRangeToDays');
 check(
-  '__internals 暴露区间纯函数（defaultRange / clampRange / filterTimeline）',
-  defaultRangeFn !== null && clampRangeFn !== null && filterTimelineFn !== null,
+  '__internals 暴露区间纯函数（defaultRange / clampRange / filterTimeline / padRangeToDays）',
+  defaultRangeFn !== null && clampRangeFn !== null && filterTimelineFn !== null
+    && padRangeToDaysFn !== null,
 );
 
 if (defaultRangeFn !== null && clampRangeFn !== null && filterTimelineFn !== null) {
@@ -1775,21 +1886,38 @@ if (defaultRangeFn !== null && clampRangeFn !== null && filterTimelineFn !== nul
     daysOf(filterTimelineFn(longSpan, def)),
   );
   check(
-    '窗口两端都落在数据边界内：不早于最早那天、不晚于最晚那天',
+    '窗口终点不越过数据末尾，且窗口是有序的闭区间（起点整整比终点早 29 天）',
     filterTimelineFn(longSpan, def).length > 0
-      && def.from >= '2025-12-01' && def.to <= '2026-12-20',
-    JSON.stringify(def),
+      && def.to <= '2026-12-20'
+      && filterTimelineFn(longSpan, def)[0] === longSpan[3]
+      && windowGridCells(def) === 42,
+    JSON.stringify(def) + '，网格格数 ' + windowGridCells(def),
   );
 
   const shortSpan = [{ day: '2026-06-01', total: 1 }, { day: '2026-06-03', total: 9 }];
+  /*
+   * **这条是这次修改的核心语义。**
+   *
+   * 旧写法在"数据跨度不足 30 天"时把窗口收缩到实际跨度（`2026-06-01 .. 2026-06-03`），
+   * 于是热力图只有 1 列——用户看到的是"没铺满"，问的是"没有的日期也要展示呀"。
+   * 新写法**照样给满 30 天窗口**（`2026-05-05 .. 2026-06-03`），前面那 27 天作为
+   * 补 0 的格子画出来：空格子表达的是"这天没有用量"，那正是热力图要传达的信息，
+   * 不是谎报。窗口由"这段时间"决定，而不是由"碰巧有数据的那几天"决定。
+   * 这就是负向对照 B 钉的那一条。
+   */
   check(
-    '跨度不足 30 天时用**实际跨度**，不补出无数据的空列（起点就是最早那天）',
-    sameRange(defaultRangeFn(shortSpan), '2026-06-01', '2026-06-03'),
+    '跨度不足 30 天时**照样给满 30 天窗口**，不按数据起点收缩（05-05 起，不是 06-01 起）',
+    sameRange(defaultRangeFn(shortSpan), '2026-05-05', '2026-06-03'),
     JSON.stringify(defaultRangeFn(shortSpan)),
   );
   check(
-    '单天时窗口是那一天（from === to），不是一个 30 天的空窗',
-    sameRange(defaultRangeFn([{ day: '2026-06-05', total: 42 }]), '2026-06-05', '2026-06-05'),
+    '不收缩的效果是格子数：3 天数据也铺满 5 列（35 格），而不是 1 列',
+    windowGridCells(defaultRangeFn(shortSpan)) === 35,
+    '按窗口算的格子数 ' + windowGridCells(defaultRangeFn(shortSpan)),
+  );
+  check(
+    '单天时窗口是一个完整的 30 天窗（数据末尾往前 30 天，含首尾），不是那一天',
+    sameRange(defaultRangeFn([{ day: '2026-06-05', total: 42 }]), '2026-05-07', '2026-06-05'),
     JSON.stringify(defaultRangeFn([{ day: '2026-06-05', total: 42 }])),
   );
   check(
@@ -1821,13 +1949,72 @@ if (defaultRangeFn !== null && clampRangeFn !== null && filterTimelineFn !== nul
     })(),
     JSON.stringify(clampRangeFn({ from: '2030-01-01', to: '2030-12-31' }, longSpan)),
   );
+  /*
+   * 下界放开之后必须配一个"跨度上限"，否则手打 2020 会画出横跨六年的网格。
+   * 这条把上限的两侧都钉住，日期差用 `Date` 现算并写进注释，不靠心算：
+   *   - `2025-12-21 .. 2026-12-20` 相差 364 天 → 不动，`clamped` 保持 false；
+   *   - `2025-12-01 .. 2026-12-20` 相差 384 天 → 超上限，只把 `from` 推到
+   *     `to − 366 天`（=`2025-12-19`），`to` 不动，`clamped` 为 true。
+   */
   check(
-    '手打 2020 年之前（远早于数据）被夹到数据最早那天',
+    '跨度上限是 366 天：不超上限时原样不动，超上限时只把 from 推到 to − 366 天',
+    (() => {
+      const pad = (value) => String(value).padStart(2, '0');
+      const key = (date) => date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+      const under = clampRangeFn({ from: '2025-12-21', to: '2026-12-20' }, longSpan);
+      const over = clampRangeFn({ from: '2025-12-01', to: '2026-12-20' }, longSpan);
+      const expected = key(new Date(2026, 11, 20 - 366)); // to − 366 天，与实现同一个算法
+      return sameRange(under, '2025-12-21', '2026-12-20') && under.clamped === false
+        && over.to === '2026-12-20' && over.from === expected && over.clamped === true;
+    })(),
+    JSON.stringify([
+      clampRangeFn({ from: '2025-12-21', to: '2026-12-20' }, longSpan),
+      clampRangeFn({ from: '2025-12-01', to: '2026-12-20' }, longSpan),
+    ]),
+  );
+  /*
+   * 上限真正生效的那条：from 早到跨了六年。
+   * 期望的 `from` 由 `to − 366 天` 现算，`to` 先夹到数据末尾——两道规则的作用都落在
+   * 同一条断言里，且都不是手抄的常数。
+   */
+  check(
+    '手打 2020 年之前（远早于数据）被**跨度上限**削到 to − 366 天，而不是夹到数据最早那天',
     (() => {
       const range = clampRangeFn({ from: '2020-01-01', to: '2027-01-01' }, longSpan);
-      return sameRange(range, '2025-12-01', '2026-12-20') && range.clamped === true;
+      const expectedFrom = (() => {
+        const [y, m, d] = range.to.split('-').map(Number);
+        const date = new Date(y, m - 1, d - 366);
+        const pad = (value) => String(value).padStart(2, '0');
+        return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+      })();
+      return range.to === '2026-12-20' && range.from === expectedFrom && range.from !== '2025-12-01'
+        && range.clamped === true;
     })(),
-    JSON.stringify(clampRangeFn({ from: '2020-01-01', to: '2027-01-01' }, longSpan)),
+    JSON.stringify(clampRangeFn({ from: '2020-01-01', to: '2027-01-01' }, longSpan))
+      + '（上限算出的起点应为 to − 366 天）',
+  );
+  /*
+   * 「全部」预设靠这一条：`from === null`（该端不限制）仍然解析成**数据最早那天**，
+   * 不是"数据起点 + 某个上限"，也不是 1970。
+   */
+  check(
+    'from === null（该端不限制）仍解析为数据最早那天（「全部」预设靠这条，别改）',
+    (() => {
+      const nullFrom = clampRangeFn({ from: null, to: '2026-06-10' }, longSpan);
+      const blankFrom = clampRangeFn({ from: '', to: '2026-06-10' }, longSpan);
+      // 只放开"下界夹取"，不放开"端点是空"的解析规则：两种写法都要落到 2025-12-01。
+      return sameRange(nullFrom, '2025-12-01', '2026-06-10') && nullFrom.clamped === true
+        && sameRange(blankFrom, '2025-12-01', '2026-06-10') && blankFrom.clamped === true;
+    })(),
+  );
+  check(
+    '早于数据起点的 from **被保留**（这是"没有的日期也要展示"能成立的关键）',
+    (() => {
+      const range = clampRangeFn({ from: '2025-11-15', to: '2026-06-10' }, longSpan);
+      // 2025-11-15 比数据最早那天（2025-12-01）早了 16 天，跨度 207 天 < 366，必须原样留。
+      return sameRange(range, '2025-11-15', '2026-06-10') && range.clamped === false;
+    })(),
+    JSON.stringify(clampRangeFn({ from: '2025-11-15', to: '2026-06-10' }, longSpan)),
   );
   check(
     '范围内的输入原样返回（clamped 不是"永远为真"的摆设）',
@@ -1845,11 +2032,22 @@ if (defaultRangeFn !== null && clampRangeFn !== null && filterTimelineFn !== nul
     })(),
     JSON.stringify(clampRangeFn({ from: '2026-06-10', to: '2026-01-05' }, longSpan)),
   );
+  /*
+   * 填反 + 越界同时发生：先交换（2030-01-01 / 2020-01-01 → 两端互换），再解析 `to`
+   * （2020-01-01 早于数据起点，夹到 2025-12-01），**最后**解析 `from`
+   * （2030-01-01 晚于夹好的 `to`，收回成 2025-12-01）。
+   *
+   * 注意这里**不再是旧语义下的单天窗口**：新语义"早于数据起点的 from 保留"作用在
+   * **交换后的 `from`**（即 2020-01-01）上，它早于 `to`（2025-12-01）且早于数据起点，
+   * 于是跨度变成 367 天 > 366，被上限削到 2025-12-19。两个新规则（下界放开 + 跨度上限）
+   * 在同一条输入上叠加，正是这条断言的价值：只改一条会给出别的日期。
+   */
   check(
-    '交换之后仍按数据边界夹取（填反 + 越界同时发生也不会漏夹）',
+    '交换之后仍按数据边界夹取（填反 + 越界同时发生也不会漏夹，且下界放开叠加跨度上限）',
     (() => {
       const range = clampRangeFn({ from: '2030-01-01', to: '2020-01-01' }, longSpan);
-      return sameRange(range, '2025-12-01', '2026-12-20') && range.clamped === true;
+      return sameRange(range, '2025-12-19', '2026-12-20') && range.clamped === true
+        && range.from !== '2025-12-01';
     })(),
     JSON.stringify(clampRangeFn({ from: '2030-01-01', to: '2020-01-01' }, longSpan)),
   );
@@ -1861,11 +2059,20 @@ if (defaultRangeFn !== null && clampRangeFn !== null && filterTimelineFn !== nul
     })(),
     JSON.stringify(clampRangeFn({ from: '', to: '2026-06-10' }, longSpan)),
   );
+  /*
+   * 两端都清空 = 「全部」= 数据的真实跨度——**但跨度上限先于这条规则生效**。
+   *
+   * 这份探针数据跨 385 天（2025-12-01 .. 2026-12-20），超过 366，所以窗口被削到
+   * 2025-12-19 起。这是刻意写下来的取舍：`from === null` 的解析规则（落到数据最早
+   * 那天）与"窗口总跨度 ≤ 366 天"两条规则在这里**冲突**，而上限赢。
+   * 真机上宿主把 timeline 限制在 `TIMELINE_MAX_DAYS = 90` 天，所以这条永远不触发；
+   * 但冲突本身是真的，记在这里免得日后有人把它当成 bug 改错方向。
+   */
   check(
-    '两端都清空 = 全部：解析成数据的真实跨度',
+    '两端都清空 = 全部：解析成数据的起止（跨度 385 天 > 366，因此被上限削到 2025-12-19 起）',
     (() => {
       const range = clampRangeFn({ from: '', to: '' }, longSpan);
-      return sameRange(range, '2025-12-01', '2026-12-20') && range.clamped === true;
+      return sameRange(range, '2025-12-19', '2026-12-20') && range.clamped === true;
     })(),
     JSON.stringify(clampRangeFn({ from: '', to: '' }, longSpan)),
   );
@@ -1877,10 +2084,15 @@ if (defaultRangeFn !== null && clampRangeFn !== null && filterTimelineFn !== nul
       const empty = clampRangeFn({}, longSpan);
       const nil = clampRangeFn(null, longSpan);
       const junk = clampRangeFn('x', longSpan);
-      return full.from === '2025-12-01' && full.to === '2026-12-20' && full.clamped === true
-        // 坏的一端不限制 → 数据起点；好的一端原样保留。
+      // `to` 端不可解析 → 数据末尾；`from` 端不可解析 → 数据起点（2025-12-01），
+      // 但整段跨度 385 天 > 366，所以"两端都不限制"的几种写法都被削到 2025-12-19 起。
+      // 关键语义不变：**该端不限制**落到数据边界上，且绝不抛、绝不产生 NaN。
+      return full.from === '2025-12-19' && full.to === '2026-12-20' && full.clamped === true
+        // 坏的一端不限制 → 数据起点（2025-12-01）；好的一端原样保留。
         && half.from === '2025-12-01' && half.to === '2026-06-10'
-        && ['from', 'to'].every((end) => empty[end] === nil[end] && nil[end] === junk[end] && empty[end] !== null);
+        && ['from', 'to'].every((end) => empty[end] === nil[end] && nil[end] === junk[end] && empty[end] !== null)
+        // 非对象 / 缺字段 / 坏串三种写法必须给出**完全一样**的结果（口径统一）。
+        && sameRange(empty, nil.from, nil.to);
     })(),
     JSON.stringify([
       clampRangeFn({ from: 'not-a-date', to: null }, longSpan),
@@ -1960,6 +2172,192 @@ if (defaultRangeFn !== null && clampRangeFn !== null && filterTimelineFn !== nul
       return geometry.days === 1 && geometry.from === '2026-12-20' && geometry.columns === 1;
     })(),
   );
+
+  /* ---- 补齐：把窗口里的每一天喂给几何（这是"铺满"的实现） ---- */
+  /*
+   * 为什么这一组必须存在：`heatmapGeometry` 的网格跨度取自传入数组的 min/max，
+   * 而 `filterTimeline` 只返回**有数据**的那几天。不补齐的话，真机那两天数据
+   * 无论窗口设多宽都只画出 2 列——用户的原话是"不是铺满的吗，没有的日期也要展示呀"。
+   * `padRangeToDays` 就是这个补 0 的动作，它自己错了不会报错，只会让图少一段。
+   */
+  if (padRangeToDaysFn !== null) {
+    const padDaysOf = (points, range) => padRangeToDaysFn(points, range).map((point) => point.day).join(',');
+
+    check(
+      'padRangeToDays 把窗口里的每一天补齐（有数据的用实际值，没有的补 total 0 / attempts 0 / buckets {}）',
+      (() => {
+        const padded = padRangeToDaysFn(
+          [{ day: '2026-06-01', total: 10 }, { day: '2026-06-03', total: 30 }],
+          { from: '2026-06-01', to: '2026-06-03' },
+        );
+        return padded.length === 3
+          && padded.map((point) => point.day).join(',') === '2026-06-01,2026-06-02,2026-06-03'
+          && padded[0].total === 10 && padded[2].total === 30
+          && padded[1].total === 0 && padded[1].attempts === 0
+          && JSON.stringify(padded[1].buckets) === '{}';
+      })(),
+      padDaysOf([{ day: '2026-06-01', total: 10 }, { day: '2026-06-03', total: 30 }],
+        { from: '2026-06-01', to: '2026-06-03' }),
+    );
+    check(
+      'padRangeToDays 保留有数据那天的**原对象**（只补不缺，几何层再自己取和）',
+      (() => {
+        const source = { day: '2026-06-02', total: 7, attempts: 3, buckets: { outputTokens: 7 } };
+        const padded = padRangeToDaysFn([source], { from: '2026-06-01', to: '2026-06-02' });
+        return padded.length === 2 && padded[1] === source && padded[0].total === 0;
+      })(),
+    );
+    check(
+      'padRangeToDays 空输入不补（整段窗口没有用量时仍走空态文案，这是既有行为）',
+      padRangeToDaysFn([], { from: '2026-06-01', to: '2026-06-30' }).length === 0
+        && padRangeToDaysFn(null, { from: '2026-06-01', to: '2026-06-30' }).length === 0
+        && padRangeToDaysFn(undefined, { from: '2026-06-01', to: '2026-06-03' }).length === 0,
+    );
+    check(
+      'padRangeToDays 单天窗口：只有那一天，且用的是真实值（不是补 0 盖掉）',
+      (() => {
+        const padded = padRangeToDaysFn([{ day: '2026-06-02', total: 7 }],
+          { from: '2026-06-02', to: '2026-06-02' });
+        return padded.length === 1 && padded[0].day === '2026-06-02' && padded[0].total === 7;
+      })(),
+    );
+    /*
+     * 跨月 / 跨年必须逐日连续。这两条同时是**闰日**的哨兵：2028 是闰年，
+     * 02-28 → 02-29 → 03-01 三天不能少一天（按毫秒加或按 30 天加都会错）。
+     */
+    check(
+      'padRangeToDays 跨月逐日连续（月末 → 次月初不能漏一天）',
+      padDaysOf([{ day: '2026-05-30', total: 1 }, { day: '2026-06-02', total: 2 }],
+        { from: '2026-05-30', to: '2026-06-02' })
+        === '2026-05-30,2026-05-31,2026-06-01,2026-06-02',
+      padDaysOf([{ day: '2026-05-30', total: 1 }, { day: '2026-06-02', total: 2 }],
+        { from: '2026-05-30', to: '2026-06-02' }),
+    );
+    check(
+      'padRangeToDays 跨年逐日连续（12-31 → 01-01 不能漏一天）',
+      padDaysOf([{ day: '2025-12-31', total: 1 }, { day: '2026-01-02', total: 2 }],
+        { from: '2025-12-31', to: '2026-01-02' })
+        === '2025-12-31,2026-01-01,2026-01-02',
+      padDaysOf([{ day: '2025-12-31', total: 1 }, { day: '2026-01-02', total: 2 }],
+        { from: '2025-12-31', to: '2026-01-02' }),
+    );
+    check(
+      'padRangeToDays 跨闰日逐日连续（2028-02-28 起的三天是 28 / 29 / 03-01）',
+      padDaysOf([{ day: '2028-02-28', total: 1 }], { from: '2028-02-28', to: '2028-03-01' })
+        === '2028-02-28,2028-02-29,2028-03-01',
+      padDaysOf([{ day: '2028-02-28', total: 1 }], { from: '2028-02-28', to: '2028-03-01' }),
+    );
+    check(
+      'padRangeToDays from > to / 端点不可解析 / 非对象 range 都**原样返回**，不抛',
+      (() => {
+        const source = [{ day: '2026-06-02', total: 7 }];
+        return padRangeToDaysFn(source, { from: '2026-06-03', to: '2026-06-01' }) === source
+          && padRangeToDaysFn(source, { from: '', to: '2026-06-01' }) === source
+          && padRangeToDaysFn(source, { from: '2026-06-01', to: null }) === source
+          && padRangeToDaysFn(source, null) === source
+          && padRangeToDaysFn(source, 'x') === source
+          && padRangeToDaysFn(source, { from: 'nope', to: 'nope' }) === source;
+      })(),
+      JSON.stringify(padRangeToDaysFn([{ day: '2026-06-02', total: 7 }], { from: '', to: '2026-06-01' })),
+    );
+    check(
+      'padRangeToDays 容忍坏条目（缺 day / 坏 day / total 非数 / null）：坏条目丢掉，好条目照补',
+      (() => {
+        const padded = padRangeToDaysFn(
+          [{ day: 'unknown', total: 9 }, null, { day: '2026-05-31' }, { day: '2026-06-02', total: 'x' }],
+          { from: '2026-05-31', to: '2026-06-02' },
+        );
+        // 坏 day 与 null 被丢掉；05-31 / 06-02 留下（06-02 的 total 是坏值，由几何层归一到 0）。
+        return padded.map((point) => point.day).join(',') === '2026-05-31,2026-06-01,2026-06-02'
+          && padded.some((point) => point.day === '2026-05-31')
+          && padded.some((point) => point.day === '2026-06-02')
+          && !padded.some((point) => point.day === 'unknown');
+      })(),
+      JSON.stringify(padRangeToDaysFn([{ day: 'unknown', total: 9 }, null, { day: '2026-05-31' }],
+        { from: '2026-05-31', to: '2026-06-01' }).map((point) => point.day)),
+    );
+    check(
+      'padRangeToDays 同一窗口内不重不漏：逐日升序、无重复、首尾就是窗口两端',
+      (() => {
+        const padded = padRangeToDaysFn(
+          [{ day: '2026-06-01', total: 1 }, { day: '2026-06-01', total: 2 }],
+          { from: '2026-05-31', to: '2026-06-02' },
+        );
+        const days = padded.map((point) => point.day);
+        const sorted = [...days].sort();
+        return days.length === 3
+          && days.join(',') === sorted.join(',')
+          && new Set(days).size === days.length
+          && days[0] === '2026-05-31' && days[days.length - 1] === '2026-06-02'
+          // 同一天出现两条（宿主数据损坏）时只留第一条：取和是几何层的事，纯补日不该改数据。
+          && padded.length === 3;
+      })(),
+      JSON.stringify(padRangeToDaysFn([{ day: '2026-06-01', total: 1 }],
+        { from: '2026-05-31', to: '2026-06-02' }).map((point) => point.day)),
+    );
+    /*
+     * 循环次数保护：跨度被 `clampRange` 限制在 366 天以内，所以补齐结果最多 367 项。
+     * 这里直接喂一个"六年宽"的窗口，验证它**不无限循环**、也不会真的吐出两千个日期。
+     */
+    check(
+      'padRangeToDays 有循环次数保护：六年宽的窗口不会无限循环，最多 MAX_RANGE_DAYS + 1 项',
+      (() => {
+        const padded = padRangeToDaysFn([{ day: '2026-12-20', total: 1 }],
+          { from: '2020-01-01', to: '2026-12-20' });
+        return padded.length <= 367 && padded.length > 1
+          && padded[0].day === '2020-01-01'
+          && padded[padded.length - 1].day <= '2026-12-20';
+      })(),
+      '补齐 ' + padRangeToDaysFn([{ day: '2026-12-20', total: 1 }], { from: '2020-01-01', to: '2026-12-20' }).length + ' 项',
+    );
+    /*
+     * **这一条就是原来那个 bug 的回归断言。**
+     * 没有 `padRangeToDays` 时，几何只能看到"有数据的那 2 天"，列数永远是 2。
+     * 补满窗口之后列数必须由**窗口**决定（5 列 35 格），而不是由数据决定。
+     */
+    check(
+      '补满窗口之后几何的跨度就是窗口：两天数据 + 30 天窗口 → 5 列 35 格（不是 2 列 14 格）',
+      (() => {
+        const points = [{ day: '2026-06-01', total: 10 }, { day: '2026-06-03', total: 30 }];
+        const window = { from: '2026-05-05', to: '2026-06-03' };
+        const filtered = filterTimelineFn(points, window);
+        const naive = heatmapGeometryFn(filtered);
+        const padded = heatmapGeometryFn(padRangeToDaysFn(filtered, window));
+        return filtered.length === 2
+          && naive.columns === 1
+          && padded.columns === 5 && padded.weeks.flat().filter((cell) => cell !== null).length === 35
+          && padded.from === '2026-05-05' && padded.to === '2026-06-03'
+          && padded.weekStart === '2026-05-03' && padded.weekEnd === '2026-06-06';
+      })(),
+    );
+    /*
+     * 跨度接近上限（366 天）时必须逐日跨过整年，而且**不漏一天**。
+     * 这是"手打一整年"和"接近宿主上限时仍要画对"的交集：
+     * 2026-01-01 + 366 天 = 2027-01-02（2026 不是闰年），所以结果正好 367 项，
+     * 首尾就是窗口两端。任何"按毫秒加"或"按月加"的写法都会在这里少一天或多一天。
+     */
+    check(
+      'padRangeToDays 覆盖整整一年的窗口：逐日连续、首尾就是窗口两端、长度正好 367（含首尾）',
+      (() => {
+        const padded = padRangeToDaysFn([{ day: '2026-01-01', total: 1 }, { day: '2027-01-02', total: 2 }],
+          { from: '2026-01-01', to: '2027-01-02' });
+        const days = padded.map((point) => point.day);
+        return padded.length === 367
+          && days[0] === '2026-01-01' && days[366] === '2027-01-02'
+          && new Set(days).size === 367
+          // 跨过 2026 年全年：2 月、12 月的边界都在里面，抽两个点确认没有月中断裂。
+          && days.includes('2026-02-28') && days.includes('2026-03-01')
+          && days.includes('2026-12-31') && days.includes('2027-01-01');
+      })(),
+      (() => {
+        const padded = padRangeToDaysFn([{ day: '2026-01-01', total: 1 }],
+          { from: '2026-01-01', to: '2027-01-02' });
+        return padded.length + ' 项，末项 ' + padded[padded.length - 1]?.day;
+      })(),
+    );
+  } else {
+    check('padRangeToDays 可取（否则"窗口铺满"无从验证）', false);
+  }
 }
 
 /* ---- 8.f 区间控件与自绘 tooltip 的接线（在渲染出来的树上查） ---- */
@@ -2057,11 +2455,18 @@ if (renderHeatmapFn !== null && typeof internals.defaultRange === 'function') {
       rangeInputs(tree)[0].props.onChange({ target: { value: '' } });
       if (cleared === null || cleared.from !== '' || cleared.adjusted !== false) return false;
       const shown = renderHeatmapFn(longSpan, tFor, { range: cleared, onRangeChange: () => {} });
-      // 框里空着（= 不限制），而画出来的范围从数据起点算起：两端都不可为空。
+      /*
+       * 框里空着（= 不限制），而画出来的范围从数据起点算起并**铺满整个窗口**：
+       * 数据跨度 385 天 > 366，所以窗口是 2025-12-19 .. 2026-12-20（54 列），
+       * 不再是旧语义下"数据真实跨度"的 56 列（2025-12-01 起）。
+       * 列数用 `windowGridCells` 从同一个 `clampRange` 推出来，不手抄常数。
+       */
       return rangeInputs(shown)[0].props.value === ''
-        && findClass(shown, /stu-heatInner/)[0].props.style['--stu-heat-weeks'] === '56';
+        && findClass(shown, /stu-heatInner/)[0].props.style['--stu-heat-weeks']
+          === String(columnsInWindow(clampRangeFn(cleared, longSpan)))
+        && !findClass(shown, /stu-heatHint/).length;
     })(),
-    '56 列 = 2025-12-01 那一周 .. 2026-12-20 那一周（不限制的一端按数据边界画）',
+    '54 列 = 2025-12-19 那一周 .. 2026-12-20 那一周（不限制的一端按数据边界画，再受 366 天上限约束）',
   );
   check(
     'from > to：写回的是**交换后**的区间（不是单天、也不是空白）',
@@ -2086,9 +2491,27 @@ if (renderHeatmapFn !== null && typeof internals.defaultRange === 'function') {
       const last7 = next;
       presetOf(tree, 'all').props.onClick();
       const all = next;
+      presetOf(tree, 'last30').props.onClick();
+      const last30 = next;
+      // 「全部」解析成数据真实的起止（`from === null` → 数据最早那天，见上面那条断言）；
+      // 这份数据跨度 385 天 > 366，所以窗口被上限削到 2025-12-19 起——但它仍然是
+      // **具体日期**（不是空串），而且没有被"收紧"提示（预设本来就在数据范围内）。
+      // 真机上宿主把 timeline 限制在 90 天，所以 from 就是数据最早那天。
       return last7.from === '2026-12-14' && last7.to === '2026-12-20' && last7.adjusted === false
-        && all.from === '2025-12-01' && all.to === '2026-12-20' && all.adjusted === false;
+        && last30.from === '2026-11-21' && last30.to === '2026-12-20' && last30.adjusted === false
+        && all.from === '2025-12-19' && all.to === '2026-12-20' && all.adjusted === false;
     })(),
+    JSON.stringify((() => {
+      const out = {};
+      const tree = renderHeatmapFn(longSpan, tFor, { range: null, onRangeChange: (v) => { out.last = v; } });
+      presetOf(tree, 'last7').props.onClick();
+      out.last7 = out.last;
+      presetOf(tree, 'last30').props.onClick();
+      out.last30 = out.last;
+      presetOf(tree, 'all').props.onClick();
+      out.all = out.last;
+      return out;
+    })()),
   );
   check(
     '没有 onRangeChange 时（离线渲染 / 旧调用点）控件照常渲染且点它不抛',
@@ -2263,11 +2686,19 @@ if (renderHeatmapFn !== null && typeof internals.defaultRange === 'function') {
     '鼠标离开 / 失焦都把浮层收起来（传 null，而不是留下一个悬着的旧提示）',
     afterBlur === null,
   );
+  /*
+   * 格子数从 7 变成 35：窗口铺满之后，`points`（3 天，最晚 06-03）的默认窗口是
+   * 2026-05-05 .. 2026-06-03，覆盖 5 个整周 → 35 格。这里钉的是"**每一个**格子"
+   * 都能被键盘聚焦（不只是那 3 个有量的），所以期望值必须跟着窗口走。
+   */
   check(
-    '格子带 tabIndex 与 onFocus/onBlur（只支持鼠标的 tooltip 等于没有无障碍）',
-    gridCells.length === 7
+    '每一格都带 tabIndex 与 onFocus/Blur（只支持鼠标的 tooltip 等于没有无障碍）',
+    gridCells.length === 35
+      && gridCells.length === windowGridCells({ from: '2026-05-05', to: '2026-06-03' })
       && gridCells.every((node) => node.props.tabIndex === 0
         && typeof node.props.onFocus === 'function' && typeof node.props.onBlur === 'function'),
+    '网格格子 ' + gridCells.length + ' 个（按窗口算应为 '
+      + windowGridCells({ from: '2026-05-05', to: '2026-06-03' }) + '）',
   );
   check(
     '量不到矩形（退化环境 / 合成事件）时仍给出文本、位置退回容器左上角，不抛',
