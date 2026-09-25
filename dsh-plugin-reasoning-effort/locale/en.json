@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Per-model Reasoning Effort",
+    "description": "Declare selectable reasoning levels for each model of a custom provider, right on the Settings → Models provider card."
+  }
+}

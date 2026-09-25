@@ -1,0 +1,39 @@
+# Dependencies and local installs
+node_modules/
+.pnpm-store/
+pnpm-debug.log*
+npm-debug.log*
+yarn-error.log*
+
+# Local development scratch space (never published)
+#
+# `_scratch/` is a temporary working directory used while developing these
+# plugins. It may contain:
+#   - DSH source files extracted from app.asar, kept locally for reference;
+#   - copies of third-party packages, used only so that plain-Node tests can
+#     resolve `@deepseek-ai/schemastery`.
+# Neither belongs in a public repository.
+_scratch/
+*.bak
+*.bak-*
+*.corrupt-*
+*.before-restore-*
+
+# Test and temporary artefacts
+*.tmp
+*.log
+coverage/
+.nyc_output/
+
+# Editors and operating systems
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# NOTE: each plugin's `scripts/*.mjs` files ARE committed on purpose.
+# They are the repository's own contract self-checks and pure-function tests,
+# not build output. They have no third-party dependencies, so a fresh clone can
+# reproduce every recorded result with `node scripts/<name>.mjs`.

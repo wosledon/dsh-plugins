@@ -1,0 +1,36 @@
+{
+  "name": "dsh-plugin-scheduled-tasks",
+  "version": "0.1.0",
+  "private": true,
+  "description": "定时任务：按 cron/间隔定时唤醒大模型执行提示词任务，带管理面板、运行日志与对话创建。",
+  "type": "module",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/**/*.js",
+    "scripts/**/*.mjs",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
+    "skills/**/*.md",
+    "README.md",
+    "README.zh.md",
+    "CONTRACT.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

@@ -1,0 +1,11 @@
+# 「按模型设置推理强度」bundle 的补丁层。
+#
+# 这里只插入一行宿主条目，因为浏览器半不由补丁声明：
+# `dsh-client-modules` 扫描「已启用 Loader 条目」的 package.json `dsh.client`
+# 声明，并通过 `exports["./client"]` 取得浏览器 bundle。所以只要有这一行，
+# client.js 就会被送进 window.__DSH_BOOT__ 并由外壳按需加载。
+#
+# 行 id 在 profile 内必须唯一；它与包名分开，方便日后换包名而不动行 id。
+- insert:
+    - id: reasoning-effort
+      name: 'dsh-plugin-reasoning-effort'

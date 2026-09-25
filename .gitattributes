@@ -1,0 +1,25 @@
+# Normalise line endings so that a Windows checkout and a Linux checkout
+# produce identical commits. Without this, `core.autocrlf=true` (the default on
+# Windows) rewrites every file it touches, and a later `git status` reports the
+# whole repository as modified even though nothing changed.
+* text=auto eol=lf
+
+# Explicitly binary — never apply end-of-line conversion to these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.exe binary
+*.dll binary
+*.woff binary
+*.woff2 binary
+
+# Keep the SVG icon readable as text (it is hand-authored), but never let a
+# tool reformat it into a single line on commit.
+*.svg text eol=lf
+
+# GitHub language stats: mark the self-check scripts as JavaScript rather than
+# letting them fall through to "other".
+*.mjs text eol=lf linguist-language=JavaScript

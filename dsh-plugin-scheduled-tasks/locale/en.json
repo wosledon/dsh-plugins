@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Scheduled Tasks",
+    "description": "Wake a model to run prompt-defined tasks on an interval, daily, weekly, cron, or one-off schedule, with a management panel, run log, and conversational creation."
+  }
+}
