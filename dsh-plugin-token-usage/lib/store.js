@@ -194,13 +194,22 @@ export function createStore(ctx, rawConfig, identity) {
     }));
   }
 
-  /** `settings` 路径：按命名空间 + 路径增量写。 */
+  /**
+   * `settings` 路径：按命名空间 + 路径增量写。
+   *
+   * **只写 `internal`，不写 `scanLimit`。** 这是真机日志给出的确切答案：
+   *
+   *   persist:fail channel=settings error=Config field "scanLimit" is not volatile
+   *
+   * `settings.mutate` **只接受 volatile 字段**（`internal` 是 `.volatile()`，
+   * `scanLimit` 不是）。原来把两者一起写，于是整条通道被一个字段拖垮——
+   * 而 `scanLimit` 本来是**用户在 config 里拥有的字段**，插件不该去写它。
+   * 这一条也是本插件唯一可用的落盘通道（另一条见下）。
+   */
   async function persistViaSettings() {
-    const ops = [
-      { op: 'set', path: ['scanLimit'], value: scanLimit },
+    await settings.mutate(identity.ns, [
       { op: 'set', path: ['internal'], value: plainClone(internal) },
-    ];
-    await settings.mutate(identity.ns, ops, undefined);
+    ], undefined);
   }
 
   /**

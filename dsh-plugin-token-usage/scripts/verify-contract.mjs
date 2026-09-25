@@ -677,9 +677,24 @@ check('locateEntry() 都不命中时返回 null（而非抛错）', locateBlock 
 
 const settingsPersistBlock = blockAfter(storeCode, 'async function persistViaSettings()');
 check('persistViaSettings() 调 mutate', settingsPersistBlock !== null && /settings\.mutate\(/.test(settingsPersistBlock));
+/*
+ * 这两条断言原先要求 ops 同时覆盖 `scanLimit` 与 `internal`，**已被真机推翻**：
+ *
+ *   persist:fail channel=settings error=Config field "scanLimit" is not volatile
+ *
+ * `settings.mutate` 只接受 volatile 字段，而 `scanLimit` 不是——把它一起写进去，
+ * 整条通道就被一个字段拖垮。而 `scanLimit` 本来属于用户拥有的 config，
+ * 插件不该去写。所以规则反过来：**ops 必须只含 `internal`，且不得出现 scanLimit**。
+ */
 check(
-  'persistViaSettings() 的 ops 覆盖 scanLimit 与 internal 两条路径',
-  settingsPersistBlock !== null && /path: \['scanLimit'\]/.test(settingsPersistBlock) && /path: \['internal'\]/.test(settingsPersistBlock),
+  'persistViaSettings() 的 ops 只写 volatile 的 internal',
+  settingsPersistBlock !== null
+    && /path: \['internal'\]/.test(settingsPersistBlock),
+);
+check(
+  'persistViaSettings() 不得写非 volatile 的 scanLimit（会让整条通道被拒）',
+  settingsPersistBlock !== null && !/path: \['scanLimit'\]/.test(settingsPersistBlock),
+  'settings.mutate 只接受 volatile 字段',
 );
 
 /*
@@ -877,8 +892,8 @@ await settingsStore.setSummary({ rows: [], scanned: 0, total: 0, truncated: fals
 check('settings 通道写入一次 mutate', mutations.length === 1, '实际 ' + mutations.length);
 check('mutate 用 identity.ns 寻址', mutations[0]?.ns === CONFIG_NS, fmt(mutations[0]?.ns));
 check(
-  'mutate 的 ops 覆盖 scanLimit 与 internal 两条路径',
-  mutations[0]?.ops?.map((op) => op.path.join('.')).join(',') === 'scanLimit,internal',
+  'mutate 的 ops 只含 internal（含 scanLimit 会被服务端整体拒绝）',
+  mutations[0]?.ops?.map((op) => op.path.join('.')).join(',') === 'internal',
   fmt(mutations[0]?.ops?.map((op) => op.path.join('.'))),
 );
 
