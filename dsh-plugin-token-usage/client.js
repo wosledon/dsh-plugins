@@ -297,11 +297,14 @@ window.__ModuleLoader__.load({
        * `.stu-heatCell` 两处，必须同步：只改一处会让列轨道与格子宽度脱钩，
        * 格子被拉伸成矩形，而图照画不误。
        */
-      '.stu-heatCell{width:11px;height:11px;border-radius:2px;background:var(--dsw-alias-bg-layer-2)}',
+      '.stu-heatCell{width:11px;height:11px;border-radius:2px;background:var(--dsw-alias-bg-layer-2);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l1)}',
       /*
-       * level 0 = "这一天没有用量"，用底色令牌——**不是**第 5 档强度。
-       * 它写在 `.stu-heatCell` 的基础规则里，不再单独来一条 `[data-level="0"]`：
-       * 基础规则已经覆盖它，多一条只会多一处需要同步的声明。
+       * level 0 = "这一天没有用量"，用底色令牌 + **一圈极细的内描边**。
+       *
+       * 描边不是装饰，是修一个真机缺陷：只填 `bg-layer-2` 时它与卡片自身的
+       * `bg-layer-1` 几乎同色，于是**零用量的格子整个隐形**——真机截图里 14 格
+       * 的范围只看得见有数据的那 2 格，看起来像"网格没画出来"。
+       * 内描边（inset，不占布局）保证无论底色多接近，格子边界始终存在。
        *
        * 1..4 档刻意用同一个色相的**不透明度**而不是四个色相：这里表达的是
        * "深浅 = 多少"的**序数**关系，用分类色（四个色相）会让读者以为四档是四种
@@ -311,10 +314,8 @@ window.__ModuleLoader__.load({
        * 写 `#4D6BFE38` 这种八位十六进制而不是 `rgba(77,107,254,.22)`：
        * 白名单是**按色值**比对的，rgba 形式无法与 CHART_PALETTE 里的四个值对齐，
        * 只能再放宽一条规则；而"收紧成白名单"正是这套断言的价值所在。
-       *
-       * 建议档位 .22 / .45 / .72 / 1：最低档在浅色与深色主题下都还看得见，
-       * 又不至于让"很少"和"没有"（level 0 的底色）混淆。
        */
+      '.stu-heatCell:hover{outline:1px solid var(--dsw-alias-brand-primary);outline-offset:0}',
       '.stu-heatCell[data-level="1"]{background:#4D6BFE38}',
       '.stu-heatCell[data-level="2"]{background:#4D6BFE73}',
       '.stu-heatCell[data-level="3"]{background:#4D6BFEB8}',
