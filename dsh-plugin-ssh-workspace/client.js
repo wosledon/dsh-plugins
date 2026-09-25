@@ -72,6 +72,20 @@ window.__ModuleLoader__.load({
       failed: '失败',
       truncated: '（输出已截断）',
       selectFirst: '先在上面选一台主机。',
+      browse: '远程目录',
+      browseHint: '浏览远端目录，选中一个作为工作目录。Agent 会用 ssh_exec 在它下面执行命令。',
+      browsePath: '远端路径（如 /home/me/project）',
+      needPath: '请先填一个远端路径。',
+      list: '列出',
+      listing: '读取中…',
+      up: '上一层',
+      root: '根目录',
+      dirEmpty: '这个目录是空的。',
+      notADirectory: '可能不是目录，或没有读取权限。',
+      selectedDir: '当前工作目录',
+      useDir: '用这个目录',
+      usedDir: '已选为工作目录，可直接让 Agent 在这里干活。',
+      entriesCount: '{n} 项',
       note: '只支持私钥认证：密钥留在你自己的 ~/.ssh 里，插件不存任何口令。',
       toolsOff: 'enableTools 为 false，Agent 侧工具未注册；面板仍可使用。',
       readFailed: '读取配置失败',
@@ -106,6 +120,20 @@ window.__ModuleLoader__.load({
       failed: 'failed',
       truncated: '(output truncated)',
       selectFirst: 'Select a host above first.',
+      browse: 'Remote directory',
+      browseHint: 'Browse a remote directory and pick one to work in. The Agent runs commands there with ssh_exec.',
+      browsePath: 'Remote path (e.g. /home/me/project)',
+      needPath: 'Enter a remote path first.',
+      list: 'List',
+      listing: 'Reading…',
+      up: 'Up',
+      root: 'Root',
+      dirEmpty: 'This directory is empty.',
+      notADirectory: 'Probably not a directory, or not readable.',
+      selectedDir: 'Working directory',
+      useDir: 'Use this directory',
+      usedDir: 'Selected. You can ask the Agent to work here now.',
+      entriesCount: '{n} entries',
       note: 'Key auth only: your key stays in your own ~/.ssh; no password is ever stored.',
       toolsOff: 'enableTools is false, so the Agent-facing tools are not registered; the panel still works.',
       readFailed: 'Failed to read config',
@@ -151,6 +179,18 @@ window.__ModuleLoader__.load({
       '.ssh-logItem{display:flex;flex-direction:column;gap:3px;padding:8px 10px;border:.5px solid var(--dsw-alias-border-l1);border-radius:8px;min-width:0}',
       '.ssh-logCmd{font-size:12px;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.ssh-logMeta{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}',
+      /* ---- 远程目录浏览（看起来像工作区选择器） ---------------------- */
+      '.ssh-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-size:12px;line-height:18px;min-width:0}',
+      '.ssh-crumb{border:0;background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:12px;cursor:pointer;padding:0 2px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.ssh-crumb:hover{text-decoration:underline}',
+      '.ssh-crumb[data-current="true"]{color:var(--dsw-alias-label-primary);cursor:default;font-weight:500}',
+      '.ssh-dir{display:flex;flex-direction:column;gap:4px;max-height:300px;overflow:auto;border:.5px solid var(--dsw-alias-border-l1);border-radius:8px;padding:4px}',
+      '.ssh-dirItem{display:flex;align-items:center;gap:8px;padding:5px 8px;border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;min-width:0}',
+      '.ssh-dirItem:hover{background:var(--dsw-alias-bg-layer-2)}',
+      '.ssh-dirItem[data-plain="true"]{cursor:default}',
+      '.ssh-dirName{flex:1;font-size:12px;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.ssh-dirMeta{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;white-space:nowrap}',
+      '.ssh-cwd{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);font-size:12px;line-height:18px;min-width:0}',
     ].join('');
 
     /* ------------------------------------------------------------------ */
@@ -163,6 +203,12 @@ window.__ModuleLoader__.load({
       const [draft, setDraft] = useState(null);
       const [command, setCommand] = useState('');
       const [busy, setBusy] = useState(false);
+      /** 目录浏览：当前路径输入、待配对的请求 id、是否在等结果。 */
+      const [browsePath, setBrowsePath] = useState('');
+      const [browseBusy, setBrowseBusy] = useState(false);
+      const [listing, setListing] = useState(null);
+      /** 人工选定的"当前工作目录"，展示给用户并可作为命令的执行目录。 */
+      const [workdir, setWorkdir] = useState('');
 
       // 挂载时读一次配置。**不赋值给变量**：`const load = useEffect(...)` 会把
       // 卸载函数存进没人用的常量，清理永不执行，而严格模式下看起来完全正常。
@@ -277,6 +323,84 @@ window.__ModuleLoader__.load({
         }
       };
 
+      /**
+       * 请求列出远端目录。
+       *
+       * 客户端**不能**直接执行远端命令：它拿不到 `tools` 服务，也没有新增 Remote
+       * 命名空间的权限。所以走"设置即通道"：
+       *   写入 `internal.request` → 宿主收到 `settings/document-updated` → 执行
+       *   → 写 `internal.result` → 这里短轮询 `describe()` 把结果取回。
+       *
+       * 轮询是**有界**的（最多约 20 秒），且只在用户点了「列出」之后才开始——
+       * 不是常驻轮询。宿主的执行是事件驱动的，没有定时器。
+       */
+      const requestListing = async (rawPath) => {
+        if (selected === null) {
+          setState((current) => ({ ...current, notice: t.selectFirst }));
+          return;
+        }
+        const path = String(rawPath ?? '').trim();
+        if (path === '') {
+          setState((current) => ({ ...current, notice: t.needPath }));
+          return;
+        }
+        if (settings === undefined || typeof settings.mutate !== 'function') {
+          setState((current) => ({ ...current, notice: t.writeFailed }));
+          return;
+        }
+        const id = `ls-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+        setBrowseBusy(true);
+        setListing(null);
+        try {
+          await settings.mutate(CONFIG_NS, [
+            { op: 'set', path: ['internal', 'request'], value: { id, hostId: selected.id, path, at: Date.now() } },
+          ]);
+          // 短轮询等结果：宿主是事件驱动的，处理完会写 result。
+          const deadline = Date.now() + 20_000;
+          while (Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 400));
+            const response = await settings.describe();
+            const read = internals.readConfig(response);
+            const result = read.config?.internal?.result;
+            if (isObject(result) && result.id === id) {
+              setState((current) => ({ ...current, config: read.config ?? {} }));
+              setListing(result);
+              setWorkdir(result.ok === true ? String(result.path ?? path) : '');
+              break;
+            }
+          }
+        } catch (error) {
+          setState((current) => ({
+            ...current,
+            notice: error instanceof Error ? error.message : String(error),
+          }));
+        } finally {
+          setBrowseBusy(false);
+        }
+      };
+
+      /** 把路径切成可点的面包屑（根 → 当前）。 */
+      const crumbsOf = (path) => {
+        const text = String(path ?? '');
+        if (text === '' || text === '/') return [{ label: '/', path: '/' }];
+        const parts = text.split('/').filter((segment) => segment !== '');
+        const out = [{ label: '/', path: '/' }];
+        let built = '';
+        for (const segment of parts) {
+          built += `/${segment}`;
+          out.push({ label: segment, path: built });
+        }
+        return out;
+      };
+
+      const parentOf = (path) => {
+        const text = String(path ?? '');
+        if (text === '' || text === '/') return '/';
+        const trimmed = text.replace(/\/+$/, '');
+        const slash = trimmed.lastIndexOf('/');
+        return slash <= 0 ? '/' : trimmed.slice(0, slash);
+      };
+
       const body = [];
 
       body.push(h('div', { className: 'ssh-head', key: 'head' },
@@ -367,6 +491,83 @@ window.__ModuleLoader__.load({
                   `${record.ok ? t.ok : t.failed} · ${internals.formatDuration(record.durationMs)} · ${new Date(record.at).toLocaleString()}`),
                 record.detail === '' ? null : h('span', { className: 'ssh-logMeta ssh-ell' }, record.detail),
                 record.truncated ? h('span', { className: 'ssh-logMeta' }, t.truncated) : null)))));
+
+        /* ---- 远程目录浏览：看起来像工作区选择器 -------------------- */
+        const crumbs = crumbsOf(listing !== null && listing.ok === true ? listing.path : browsePath);
+        const entries = listing !== null && Array.isArray(listing.entries) ? listing.entries : [];
+
+        body.push(h('div', { className: 'ssh-card', key: 'browse' },
+          h('div', { className: 'ssh-cardHead' }, `${t.browse} · ${internals.hostDisplayName(selected)}`),
+          h('p', { className: 'ssh-sub', style: { margin: 0 } }, t.browseHint),
+
+          // 路径输入 + 列出 + 上一层
+          h('div', { className: 'ssh-row' },
+            h('input', {
+              className: 'ssh-input',
+              style: { flex: 1 },
+              'aria-label': t.browsePath,
+              placeholder: t.browsePath,
+              value: browsePath,
+              onChange: (event) => setBrowsePath(event.target.value),
+              onKeyDown: (event) => { if (event.key === 'Enter') void requestListing(browsePath); },
+            }),
+            h('button', {
+              className: 'ssh-btn',
+              type: 'button',
+              'data-primary': 'true',
+              disabled: browseBusy || browsePath.trim() === '',
+              onClick: () => void requestListing(browsePath),
+            }, browseBusy ? t.listing : t.list),
+            h('button', {
+              className: 'ssh-btn',
+              type: 'button',
+              disabled: browseBusy || browsePath === '',
+              onClick: () => { const up = parentOf(browsePath); setBrowsePath(up); void requestListing(up); },
+            }, t.up)),
+
+          // 面包屑（每一节都可点，像路径导航）
+          listing !== null && listing.ok === true
+            ? h('div', { className: 'ssh-crumbs' }, crumbs.map((crumb, index) => h('button', {
+                className: 'ssh-crumb',
+                key: crumb.path,
+                type: 'button',
+                'data-current': String(index === crumbs.length - 1),
+                title: crumb.path,
+                onClick: () => {
+                  if (index === crumbs.length - 1) return;
+                  setBrowsePath(crumb.path);
+                  void requestListing(crumb.path);
+                },
+              }, crumb.label)))
+            : null,
+
+          // 当前选定的工作目录
+          workdir === '' ? null : h('div', { className: 'ssh-cwd' },
+            h('span', { className: 'ssh-dirMeta' }, t.selectedDir),
+            h('span', { className: 'ssh-dirName', title: workdir }, workdir)),
+
+          // 结果
+          listing === null
+            ? null
+            : listing.ok !== true
+              ? h('p', { className: 'ssh-error' }, `${t.notADirectory} ${listing.detail ?? ''}`.trim())
+              : entries.length === 0
+                ? h('p', { className: 'ssh-empty' }, t.dirEmpty)
+                : h('div', { className: 'ssh-dir' }, entries.map((entry) => h('button', {
+                    className: 'ssh-dirItem',
+                    key: entry.path,
+                    type: 'button',
+                    'data-plain': String(entry.directory !== true),
+                    title: entry.path,
+                    onClick: () => {
+                      if (entry.directory !== true) return;
+                      setBrowsePath(entry.path);
+                      void requestListing(entry.path);
+                    },
+                  },
+                    h('span', { className: 'ssh-dirName' }, entry.directory === true ? `${entry.name}/` : entry.name),
+                    h('span', { className: 'ssh-dirMeta' },
+                      entry.directory === true ? '' : internals.formatBytes(entry.size)))))));
       } else if (hosts.length > 0) {
         body.push(h('p', { className: 'ssh-empty', key: 'hint' }, t.selectFirst));
       }
@@ -416,6 +617,7 @@ window.__ModuleLoader__.load({
         hostSummary: typeof internals.hostSummary === 'function' ? internals.hostSummary : () => '',
         normaliseHistory: typeof internals.normaliseHistory === 'function' ? internals.normaliseHistory : (list) => (Array.isArray(list) ? list : []),
         formatDuration: typeof internals.formatDuration === 'function' ? internals.formatDuration : () => '—',
+        formatBytes: typeof internals.formatBytes === 'function' ? internals.formatBytes : () => '',
       };
 
       /* 样式：工厂无副作用，注入与回收都放进 ctx.effect。 */

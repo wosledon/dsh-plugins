@@ -17,9 +17,10 @@
 import { Config } from './lib/config.js';
 import { CONFIG_NS, PACKAGE_NAME } from './lib/constants.js';
 import { createStore } from './lib/store.js';
-import { buildTools } from './lib/tools.js';
+import { buildTools, listRemoteDir } from './lib/tools.js';
 import {
   escapeRemotePath,
+  formatBytes,
   formatDuration,
   formatExact,
   hostDisplayName,
@@ -147,6 +148,75 @@ export function apply(ctx, rawConfig) {
     }, `${PACKAGE_NAME}: tools`);
   }
 
+  /* ---------------- 面板的目录浏览请求 ---------------- */
+  /*
+   * 客户端（浏览器半）拿不到 `tools` 服务，也没有新增 Remote 命名空间的权限，
+   * 所以面板里的「列出目录」只能走 `remote.settings` 这条通用读写通道：
+   *
+   *   客户端 `settings.mutate` 写入 `internal.request`
+   *     → 宿主收到 `settings/document-updated` 事件
+   *     → 用与 `ssh_list_dir` **完全相同**的 `listRemoteDir()` 执行
+   *     → 把结果写进 `internal.result`
+   *     → 客户端按 `id` 配对后渲染
+   *
+   * **事件驱动，不需要定时器。** 我先查了服务契约：`settings` 的方法列表里没有
+   * 任何 `on`/`watch`，所以一度以为只能轮询；但事件目录里有
+   *   `settings/document-updated(ns, revision)` —— "One profile entry's form values,
+   *   availability, or page policy changed"，正是这里要的钩子。
+   *
+   * 两处防自激：
+   *   1. 只认 `ns === CONFIG_NS`（宿主写 `result` 也会触发本事件）；
+   *   2. 用 `servicedRequests` 记住已处理的请求 id，同一个请求不重复执行。
+   */
+  const servicedRequests = new Set();
+
+  async function serviceRequest() {
+    // 请求是客户端写进 profile 的，必须先刷新才能看到（内存快照不会自动更新）。
+    await store.refresh();
+    const request = store.getRequest();
+    if (request === null) return;
+    if (servicedRequests.has(request.id)) return;
+    servicedRequests.add(request.id);
+    // 只留最近若干条，避免长期运行后无限增长（请求 id 是时间戳+随机串，不会重复）。
+    if (servicedRequests.size > 64) servicedRequests.clear();
+
+    try {
+      const payload = await listRemoteDir(
+        { getConfig: () => store.getConfig(), pushHistory: (record) => store.pushHistory(record) },
+        request.hostId,
+        request.path,
+      );
+      await store.setResult({
+        id: request.id,
+        ok: payload.ok === true,
+        hostId: request.hostId,
+        path: payload.path ?? request.path,
+        detail: payload.message ?? '',
+        count: payload.count ?? 0,
+        truncated: payload.truncatedByLimit === true,
+        entries: payload.entries ?? [],
+      });
+    } catch (error) {
+      await store.setResult({
+        id: request.id,
+        ok: false,
+        hostId: request.hostId,
+        path: request.path,
+        detail: messageOf(error),
+      });
+    }
+  }
+
+  if (typeof ctx.on === 'function') {
+    ctx.on('settings/document-updated', (ns) => {
+      if (String(ns) !== CONFIG_NS) return;
+      void serviceRequest();
+    });
+    // 启动时也服务一次：客户端可能在上一次宿主生命周期里写了请求，
+    // 那次事件没人接。
+    void serviceRequest();
+  }
+
   /* ---------------- 客户端可用的纯函数 ---------------- */
   /*
    * 客户端 bundle 只能 `require('react')`，拿不到这些实现。通过 globals 暴露，
@@ -172,6 +242,7 @@ export function apply(ctx, rawConfig) {
       normaliseHistory,
       formatDuration,
       formatExact,
+      formatBytes,
       splitPath,
       escapeRemotePath,
       resolveTimeout,

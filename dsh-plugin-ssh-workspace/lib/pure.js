@@ -240,6 +240,25 @@ export function formatExact(value) {
   return String(Math.floor(value)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
+/**
+ * 人类可读的字节数（二进制单位，与 `ls -h` 的常见观感一致）。
+ *
+ * 目录项没有大小，调用方要自己跳过——这里对负数/非数返回空串而不是 `0B`，
+ * 免得界面上把"不适用"显示成一个看似真实的 0。
+ */
+export function formatBytes(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return '';
+  if (value < 1024) return `${Math.round(value)}B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let size = value / 1024;
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  return `${size < 10 ? size.toFixed(1) : Math.round(size)}${units[index]}`;
+}
+
 /** 把路径切成目录与末段；相对路径与尾部分隔符都不炸。 */
 export function splitPath(path) {
   const text = typeof path === 'string' ? path : '';

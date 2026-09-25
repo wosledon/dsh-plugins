@@ -171,34 +171,52 @@ async function runExec(api, input) {
   return payload;
 }
 
-async function runListDir(api, input) {
-  const found = resolveHost(api.getConfig().hosts, input.hostId);
-  if (found.error !== undefined) return found.error;
-  const path = typeof input.path === 'string' ? input.path.trim() : '';
-  if (path === '') return fail('EMPTY_PATH', 'path 不能为空。');
-  const timeoutMs = resolveTimeout(api.getConfig().timeoutMs);
-  const limit = Math.max(1, Math.min(MAX_LIST_ENTRIES, Math.floor(Number.isFinite(api.getConfig().maxListEntries) ? api.getConfig().maxListEntries : MAX_LIST_ENTRIES)));
-  const args = buildSshArgs({
-    host: found.host,
-    remoteCommand: findCommand(path),
-    connectTimeoutMs: 10_000,
-  });
+/**
+ * 列一个远程目录。
+ *
+ * **导出**是刻意的：面板的「列出」按钮由宿主半的请求服务处理，而那条路径必须与
+ * `ssh_list_dir` 工具**完全相同**——两处各写一份，迟早会出现"工具列得出来、
+ * 面板列不出来"这种只在一边复现的问题。
+ *
+ * 返回不带 `decorate` 的原始结果，调用方按需补主机信息（工具要，面板的 UI 也
+ * 能自己从 hosts 里取）。
+ */
+export async function listRemoteDir(api, hostId, rawPath) {
+  const found = resolveHost(api.getConfig().hosts, hostId);
+  if (found.error !== undefined) return { ...found.error, hostId };
+  const path = typeof rawPath === 'string' ? rawPath.trim() : '';
+  if (path === '') return { ...fail('EMPTY_PATH', 'path 不能为空。'), hostId };
+  const config = api.getConfig();
+  const timeoutMs = resolveTimeout(config.timeoutMs);
+  const configured = Number.isFinite(config.maxListEntries) ? config.maxListEntries : MAX_LIST_ENTRIES;
+  const limit = Math.max(1, Math.min(MAX_LIST_ENTRIES, Math.floor(configured)));
+  const args = buildSshArgs({ host: found.host, remoteCommand: findCommand(path), connectTimeoutMs: 10_000 });
   const result = await runSsh(args, { timeoutMs });
   if (!result.ok) {
-    return decorate({
+    return {
       ok: false,
       code: result.exitCode === null ? 'SSH_FAILED' : 'NONZERO_EXIT',
       message: `列目录失败：${result.detail !== '' ? result.detail : result.stderr.trim().slice(0, 500)}`,
-    }, found.host);
+      hostId: found.host.id,
+      path,
+    };
   }
   const entries = parseFindOutput(result.stdout, limit);
-  return decorate({
+  return {
     ok: true,
+    hostId: found.host.id,
     path,
     count: entries.length,
     truncatedByLimit: result.truncated || entries.length >= limit,
     entries,
-  }, found.host);
+  };
+}
+
+async function runListDir(api, input) {
+  const payload = await listRemoteDir(api, input.hostId, input.path);
+  if (payload.ok !== true) return payload;
+  const found = resolveHost(api.getConfig().hosts, input.hostId);
+  return found.error !== undefined ? payload : decorate(payload, found.host);
 }
 
 async function runReadFile(api, input) {

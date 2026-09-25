@@ -202,12 +202,58 @@ export function createStore(ctx, rawConfig, options) {
     }
   }
 
+  /**
+   * 读客户端写进来的目录浏览请求。
+   *
+   * 返回 `null` 表示"没有请求"。返回对象时再比对 `at`，避免对同一个请求重复执行
+   * ——`settings/document-updated` 会因为**任何**字段变化而触发（包括宿主自己写
+   * `result` 造成的那次），不比对就会自我循环。
+   */
+  function getRequest() {
+    const request = internal.request;
+    if (!isObject(request)) return null;
+    const id = typeof request.id === 'string' ? request.id.trim() : '';
+    const hostId = typeof request.hostId === 'string' ? request.hostId.trim() : '';
+    if (id === '' || hostId === '') return null;
+    return {
+      id,
+      hostId,
+      path: typeof request.path === 'string' ? request.path : '',
+      at: Number.isFinite(request.at) ? request.at : 0,
+    };
+  }
+
+  /** 写目录浏览结果。客户端按 `id` 与自己的请求配对。 */
+  async function setResult(record) {
+    internal = {
+      ...internal,
+      result: {
+        id: String(record?.id ?? ''),
+        ok: record?.ok === true,
+        hostId: String(record?.hostId ?? ''),
+        path: String(record?.path ?? ''),
+        detail: String(record?.detail ?? ''),
+        count: Number.isFinite(record?.count) ? record.count : 0,
+        truncated: record?.truncated === true,
+        entries: Array.isArray(record?.entries) ? plainClone(record.entries) : [],
+        at: Date.now(),
+      },
+    };
+    try {
+      return await persist();
+    } catch {
+      return false;
+    }
+  }
+
   return {
     ns,
     packageName,
     refresh,
     persist,
     getConfig,
+    getRequest,
+    setResult,
     pushHistory,
     setLastProbe,
     setLastBoot,

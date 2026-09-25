@@ -381,6 +381,7 @@ realCheck('工具内部异常被兜成失败结果而不是抛给 Agent', /fail\
  * 规则会对着自己的解释文字判违规（这条断言第一次跑就是这么红的）。
  */
 const toolsCode = stripComments(toolsSource);
+const configSource = fs.readFileSync(path.join(root, 'lib/config.js'), 'utf8');
 realCheck('value schema DSL 里不出现 JSON Schema 的 required 数组',
   !/\brequired:\s*\[/.test(toolsCode), '出现 required: [...] 数组形式');
 realCheck('输出 schema 带 additionalProperties（与已验证的 scheduled-tasks 一致）',
@@ -403,6 +404,48 @@ realCheck('render 的第一个参数是调用参数（签名要匹配）',
 realCheck('每个来源调用都有超时（exec.js 里自己累积并按字节封顶）', /truncated/.test(fs.readFileSync(path.join(root, 'lib/exec.js'), 'utf8')));
 realCheck('超时一定杀进程（否则挂住的 ssh 会一直占着宿主）',
   /child\.kill\('SIGKILL'\)/.test(fs.readFileSync(path.join(root, 'lib/exec.js'), 'utf8')));
+
+/* ------------------------------------------------------------------ */
+console.log('');
+console.log('[10. 面板的目录浏览通道（客户端→宿主）]');
+
+/*
+ * 客户端拿不到 `tools`，也不能新增 Remote 命名空间，所以面板的「列出目录」
+ * 只能走 `remote.settings` 这条通用读写通道。**关键是不能退化成轮询**：
+ *   `settings` 的方法列表里没有 on/watch，看起来只能定时器轮询；
+ *   但事件目录里有 `settings/document-updated(ns, revision)`，那才是正确的钩子。
+ * 这里断言宿主用的是事件而不是定时器——定时器会让"插件永远在跑"成为事实，
+ * 而这个插件本来没有任何后台工作。
+ */
+realCheck('宿主监听 settings/document-updated 事件（而不是建定时器）',
+  /ctx\.on\('settings\/document-updated'/.test(hostCode));
+realCheck('宿主仍然没有定时器（事件驱动，不是轮询）', !/setInterval/.test(hostCode));
+realCheck('事件处理里按命名空间过滤（宿主写 result 也会触发同一事件）',
+  /String\(ns\) !== CONFIG_NS/.test(hostCode));
+realCheck('已处理的请求记在集合里，避免自我循环',
+  /servicedRequests\.has\(request\.id\)/.test(hostCode) && /servicedRequests\.add\(request\.id\)/.test(hostCode));
+realCheck('处理前先 refresh（请求是客户端写进 profile 的，内存快照不会自动更新）',
+  /await store\.refresh\(\);\s*\n\s*const request = store\.getRequest\(\)/.test(hostCode));
+
+/*
+ * 面板与工具必须走**同一份**列目录实现。两处各写一份，迟早出现"工具列得出来、
+ * 面板列不出来"这种只在一边复现的问题。
+ */
+realCheck('列目录逻辑被抽成导出函数供两处共用',
+  /export async function listRemoteDir\(/.test(toolsCode)
+    && /listRemoteDir\(/.test(hostCode));
+realCheck('ssh_list_dir 工具复用同一个函数',
+  /async function runListDir\(api, input\) \{[\s\S]{0,120}?listRemoteDir\(/.test(toolsCode));
+
+realCheck('客户端写入 internal.request（设置即通道）',
+  /path: \['internal', 'request'\]/.test(code));
+realCheck('客户端的等待是**有界**的（不是常驻轮询）',
+  /Date\.now\(\) \+ 20_000/.test(code) && /await new Promise\(\(resolve\) => setTimeout\(resolve, 400\)\)/.test(code));
+realCheck('结果按 id 配对（避免把上一次的结果当成本次）', /result\.id === id/.test(code));
+realCheck('配置 schema 声明了 request 与 result（未声明字段会被剥离）',
+  /request: Schema\.object\(\{/.test(configSource) && /result: Schema\.object\(\{/.test(configSource));
+realCheck('目录项 schema 声明完整（path/name/directory/kind/size/mtimeMs）',
+  ['path', 'name', 'directory', 'kind', 'size', 'mtimeMs'].every((field) => new RegExp(`${field}: Schema\\.`).test(configSource)));
 
 /* ------------------------------------------------------------------ */
 console.log('');

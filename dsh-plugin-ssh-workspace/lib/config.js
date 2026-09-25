@@ -78,6 +78,17 @@ const recordSchema = Schema.object({
   detail: Schema.string(),
 });
 
+/** 一个远端目录项（`internal.result.entries` 的元素）。 */
+const entrySchema = Schema.object({
+  path: Schema.string(),
+  name: Schema.string(),
+  directory: Schema.boolean().default(false),
+  /** GNU find 的 `%y`：d/f/l/… */
+  kind: Schema.string(),
+  size: Schema.number().default(0),
+  mtimeMs: Schema.number().default(0),
+});
+
 export const Config = Schema.object({
   /** 远程主机列表。 */
   hosts: Schema.array(hostSchema).default([]),
@@ -115,6 +126,34 @@ export const Config = Schema.object({
       at: Schema.number(),
       phase: Schema.string(),
       detail: Schema.string(),
+    }),
+    /**
+     * 客户端写入的目录浏览请求。
+     *
+     * 客户端（浏览器半）拿不到 `tools` 服务，也没有新增 Remote 命名空间的权限，
+     * 所以「列目录」这件事只能走 `remote.settings` 这条通用读写通道：
+     * 客户端把请求写进来 → 宿主收到 `settings/document-updated` 事件 →
+     * 用与 `ssh_list_dir` **完全相同**的代码路径执行 → 结果写进 `result`。
+     *
+     * 事件驱动而非轮询：宿主侧不需要定时器（见 index.js 的说明）。
+     */
+    request: Schema.object({
+      id: Schema.string(),
+      hostId: Schema.string(),
+      path: Schema.string(),
+      at: Schema.number(),
+    }),
+    /** 上面那次请求的结果。客户端按 `id` 与自己的请求配对。 */
+    result: Schema.object({
+      id: Schema.string(),
+      ok: Schema.boolean().default(false),
+      hostId: Schema.string(),
+      path: Schema.string(),
+      detail: Schema.string(),
+      count: Schema.number().default(0),
+      truncated: Schema.boolean().default(false),
+      entries: Schema.array(entrySchema).default([]),
+      at: Schema.number(),
     }),
   }).volatile(),
 });
