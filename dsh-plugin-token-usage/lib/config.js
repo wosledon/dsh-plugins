@@ -28,6 +28,14 @@ const rowSchema = Schema.object({
   attempts: Schema.number().default(0),
 });
 
+/** 时间轴的一天：折线图的一个数据点。 */
+const daySchema = Schema.object({
+  day: Schema.string().required(),
+  buckets: bucketSchema,
+  total: Schema.number().default(0),
+  attempts: Schema.number().default(0),
+});
+
 /**
  * 跨会话汇总。
  *
@@ -36,6 +44,13 @@ const rowSchema = Schema.object({
  */
 const summarySchema = Schema.object({
   rows: Schema.array(rowSchema).default([]),
+  /**
+   * 折线图的数据源，按本地日期升序。
+   *
+   * 老数据没有这个字段，所以**不能** required；界面在它缺失或为空时
+   * 必须降级为"不画折线"，而不是画一条歪的。
+   */
+  timeline: Schema.array(daySchema).default([]),
   scanned: Schema.number().default(0),
   total: Schema.number().default(0),
   truncated: Schema.boolean().default(false),

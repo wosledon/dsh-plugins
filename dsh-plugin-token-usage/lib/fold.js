@@ -231,3 +231,87 @@ export function formatExact(value) {
   if (!Number.isFinite(value) || value < 0) return '0';
   return String(Math.floor(value)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
+
+/* ---------------------------------------------------------------- */
+/* 时间轴：按「事件本地日期」归并的用量                                 */
+/* ---------------------------------------------------------------- */
+
+/**
+ * 把毫秒时间戳折成本地日期键 `YYYY-MM-DD`。
+ *
+ * 用**本地**日期而不是 UTC：用户问"哪天用得多"问的是自己的日历日，
+ * 用 UTC 会让晚上 8 点之后的用量跑到第二天去（东八区差 8 小时）。
+ *
+ * @param {number} ms
+ * @returns {string|null} 时间戳不可用时返回 null
+ */
+export function dayKeyOf(ms) {
+  if (!Number.isFinite(ms)) return null;
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) return null;
+  const pad = (value) => String(value).padStart(2, '0');
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+}
+
+/** 空时间轴：`{ 'YYYY-MM-DD': { buckets, attempts } }`。 */
+export function emptyTimeline() {
+  return {};
+}
+
+/**
+ * 把一条事件按**事件自身的 `time`** 归入某一天。
+ *
+ * 刻意用 `event.time` 而不是会话的 `createdAt`：一个会话可能横跨多天
+ * （长任务、挂着不关、压缩后继续），按 `createdAt` 会把后几天的用量全算到
+ * 第一天，折线图直接失真。事件自带时间就没这个问题。
+ *
+ * 与 `applyAttempt` 一样是纯的，且对无关事件返回同一引用。
+ *
+ * @param {object} timeline
+ * @param {unknown} event
+ * @returns {object} 新时间轴；与用量无关或没有时间戳时返回原引用
+ */
+export function applyTimeline(timeline, event) {
+  const attempt = attemptOf(event);
+  if (attempt === null) return timeline;
+  const time = event !== null && typeof event === 'object' && Number.isFinite(event.time) ? event.time : null;
+  // 没有时间戳就不进时间轴：宁可少一个点，也不假装它属于某一天。
+  if (time === null) return timeline;
+  const day = dayKeyOf(time);
+  if (day === null) return timeline;
+  const base = timeline !== null && typeof timeline === 'object' ? timeline : emptyTimeline();
+  const previous = base[day];
+  return {
+    ...base,
+    [day]: {
+      buckets: addBuckets(previous?.buckets, attempt.buckets),
+      attempts: (previous?.attempts ?? 0) + 1,
+    },
+  };
+}
+
+/**
+ * 摊平成**按日期升序**的数组，并可选只保留最近 N 天。
+ *
+ * `limit` 对时间轴是必需的：会话历史可能有几年，把上千个点塞进折线图
+ * 既画不清也占空间。截断保留**最近**的，与"看近期趋势"的意图一致。
+ *
+ * @param {object} timeline
+ * @param {number} [limit] 最多保留多少天
+ * @returns {Array<{day:string,total:number,attempts:number,buckets:object}>}
+ */
+export function timelineRows(timeline, limit) {
+  const base = timeline !== null && typeof timeline === 'object' ? timeline : {};
+  const days = Object.keys(base).sort();
+  const window = Number.isFinite(limit) && limit > 0 ? days.slice(-Math.floor(limit)) : days;
+  return window.map((day) => {
+    const entry = base[day];
+    const buckets = { ...emptyBuckets(), ...(entry?.buckets ?? {}) };
+    return {
+      day,
+      buckets,
+      total: totalOf(buckets),
+      attempts: Number.isFinite(entry?.attempts) ? entry.attempts : 0,
+    };
+  });
+}

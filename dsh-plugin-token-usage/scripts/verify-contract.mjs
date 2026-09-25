@@ -970,7 +970,7 @@ check('顶层有 scanLimit 且默认 200', /scanLimit:\s*Schema\.number\(\)\.def
   };
   const summarySchemaBlock = grab('summarySchema');
   const bucketSchemaBlock = grab('bucketSchema');
-  const returnedFields = ['rows', 'scanned', 'total', 'truncated', 'skipped', 'builtAt', 'source'];
+  const returnedFields = ['rows', 'timeline', 'scanned', 'total', 'truncated', 'skipped', 'builtAt', 'source'];
   const undeclared = returnedFields.filter(
     (field) => summarySchemaBlock === null || !new RegExp('\\b' + field + '\\s*:').test(summarySchemaBlock),
   );

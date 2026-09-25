@@ -14,7 +14,9 @@ const check = (label, cond, detail) => {
 
 // —— 两个来源都能折叠 ——
 const events = [
-  { type: 'assistant/message', data: { turn: 1, step: 1, message: { role: 'assistant', source: { kind: 'model', provider: 'stepfun', model: 'step-5-preview' } }, stream: [], usage: { inputTokens: 900, outputTokens: 100, cacheReadTokens: 50 } } },
+  // 必须带 `time`：时间轴按事件时间归日，没有时间戳的事件**刻意不进轴**
+  // （宁可少一个点，也不假装它属于某一天）。夹具漏了它，折线图数据就会是空的。
+  { type: 'assistant/message', time: Date.UTC(2026, 5, 1, 4, 0, 0), data: { turn: 1, step: 1, message: { role: 'assistant', source: { kind: 'model', provider: 'stepfun', model: 'step-5-preview' } }, stream: [], usage: { inputTokens: 900, outputTokens: 100, cacheReadTokens: 50 } } },
 ];
 const makeSource = (kind) => {
   if (kind === 'query') {
@@ -53,6 +55,12 @@ for (const kind of Object.keys(ADAPTERS)) {
   check(`${kind}: 总量正确（1050）`, summary.rows[0]?.total === 1050, String(summary.rows[0]?.total));
   check(`${kind}: summary.source 是 ${ADAPTERS[kind].label}`, summary.source === ADAPTERS[kind].label, summary.source);
   check(`${kind}: 带 skipped 字段`, Number.isFinite(summary.skipped), String(summary.skipped));
+  check(`${kind}: 带 timeline 数组（折线图数据源）`, Array.isArray(summary.timeline), JSON.stringify(summary.timeline));
+  check(
+    `${kind}: timeline 有 1 天且总量为 1050`,
+    summary.timeline.length === 1 && summary.timeline[0].total === 1050,
+    JSON.stringify(summary.timeline),
+  );
 
   const input = { scanLimit: 200, internal: { summary, lastSweep: { at: 1, ok: true, detail: '' } } };
   try {
@@ -64,8 +72,48 @@ for (const kind of Object.keys(ADAPTERS)) {
     check(`${kind}: Config 保留了 source`, typeof kept?.source === 'string', JSON.stringify(kept?.source));
     check(`${kind}: Config 保留了 rows`, Array.isArray(kept?.rows) && kept.rows.length === 1, JSON.stringify(kept?.rows?.length));
     check(`${kind}: Config 保留了每行的 buckets`, kept?.rows?.[0]?.buckets?.uncachedInputTokens === 900, JSON.stringify(kept?.rows?.[0]?.buckets));
+    // 折线图数据源必须原样落盘：丢了它图表就永远是空的，而页面不会报错。
+    check(`${kind}: Config 保留了 timeline`, Array.isArray(kept?.timeline) && kept.timeline.length === 1, JSON.stringify(kept?.timeline));
+    check(`${kind}: Config 保留了 timeline 的 day 与 total`,
+      typeof kept?.timeline?.[0]?.day === 'string' && kept.timeline[0].total === 1050,
+      JSON.stringify(kept?.timeline?.[0]));
+    check(`${kind}: Config 保留了 timeline 的 buckets`,
+      kept?.timeline?.[0]?.buckets?.uncachedInputTokens === 900,
+      JSON.stringify(kept?.timeline?.[0]?.buckets));
   } catch (error) {
     check(`${kind}: Config 接受整份 summary`, false, error.message);
+  }
+}
+
+// —— 老数据没有 timeline 时不能炸 ——
+//
+// 实测：schemastery **不会**为 `.volatile()` 里缺失的嵌套数组字段填充
+// `default([])`——`timeline` 会如实是 `undefined`。所以"默认值兜底"这个假设
+// 是错的，契约只能是：**旧数据确实可能没有 timeline，客户端必须容忍它的缺失**。
+// 这条测的就是"不会炸"，而不是"会被补成空数组"。
+{
+  const legacy = {
+    rows: [],
+    scanned: 0, total: 0, truncated: false, skipped: 0, builtAt: 1,
+    // 刻意没有 timeline
+  };
+  const input = { scanLimit: 200, internal: { summary: legacy } };
+  try {
+    Config(input);
+    const kept = plainConfig(input)?.internal?.summary;
+    check('旧 summary 缺 timeline 时 Config 不抛错', true);
+    check(
+      '缺 timeline 时它是 undefined（不是被默认成空数组）——客户端必须容忍缺失',
+      kept?.timeline === undefined || Array.isArray(kept?.timeline),
+      JSON.stringify(kept?.timeline),
+    );
+    check(
+      '缺 timeline 时其它字段照常保留（不会因为一个可选字段整段丢掉）',
+      kept?.builtAt === 1 && Array.isArray(kept?.rows),
+      JSON.stringify({ builtAt: kept?.builtAt, rows: kept?.rows }),
+    );
+  } catch (error) {
+    check('旧 summary 缺 timeline 时 Config 不抛错', false, error.message);
   }
 }
 

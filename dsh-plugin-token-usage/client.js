@@ -70,6 +70,15 @@ window.__ModuleLoader__.load({
       bCacheRead: '缓存读',
       bCacheWrite: '缓存写',
       chartAria: '{model}（{provider}）合计 {total} token',
+      chartModels: '按模型占比',
+      chartTrend: '按天趋势',
+      chartComposition: '按模型构成',
+      donutAria: '环形图：按模型占比，共 {total} token',
+      segmentAria: '{model}：{share}% 合计 {total} token',
+      donutCenter: '合计',
+      trendEmpty: '这段时间没有用量。',
+      dayRange: '{from} 至 {to}',
+      pointAria: '{day}：{total} token',
       loading: '载入中…',
       close: '关闭',
     };
@@ -108,6 +117,15 @@ window.__ModuleLoader__.load({
       bCacheRead: 'Cache R',
       bCacheWrite: 'Cache W',
       chartAria: '{model} ({provider}), {total} tokens total',
+      chartModels: 'Share by model',
+      chartTrend: 'Trend by day',
+      chartComposition: 'Composition by model',
+      donutAria: 'Donut chart: share by model, {total} tokens total',
+      segmentAria: '{model}: {share}%, {total} tokens',
+      donutCenter: 'Total',
+      trendEmpty: 'No usage recorded in this period.',
+      dayRange: '{from} – {to}',
+      pointAria: '{day}: {total} tokens',
       loading: 'Loading…',
       close: 'Close',
     };
@@ -167,6 +185,50 @@ window.__ModuleLoader__.load({
       '.stu-swatch[data-bucket="cacheReadTokens"]{background:var(--dsw-alias-brand-primary);opacity:.46}',
       '.stu-swatch[data-bucket="cacheWriteTokens"]{background:var(--dsw-alias-brand-primary);opacity:.24}',
       '.stu-legendValue{color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}',
+      /* ---- 图表：环形图（按模型占比） ------------------------------ */
+      /*
+       * 环形图回答"谁占大头"，堆叠条回答"每个模型的内部构成"，折线回答"什么时候用的"。
+       * 三个问题不同，所以是三个视图而不是一个——之前只有堆叠条，于是"哪几天用量暴涨"
+       * 和"整体份额"这两件事在界面上没有表达。
+       */
+      '.stu-figure{display:flex;flex-direction:column;gap:10px;padding:14px;border:.5px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}',
+      '.stu-figureHead{font-size:12px;font-weight:600;line-height:18px;color:var(--dsw-alias-label-primary)}',
+      /*
+       * 环形用 grid 而不是 flex：图例条数不固定，flex 下长图例会把圆环挤扁成椭圆。
+       * 环宽固定、图例占剩余宽度，模型再多也只会把图例换行。
+       */
+      '.stu-donut{display:grid;grid-template-columns:132px minmax(0,1fr);gap:16px;align-items:center}',
+      '.stu-donutWrap{position:relative;width:132px;height:132px}',
+      '.stu-donutSvg{display:block;width:100%;height:100%}',
+      '.stu-donutTrack{stroke:var(--dsw-alias-bg-layer-2)}',
+      /* 段色 = 品牌色按模型次序降透明度，和四桶那套同一思路：没有分类色板可用，
+         硬借 state-* 会把某个模型染成"错误色"。颜色只负责分组，读数看图例。 */
+      '.stu-donutSeg{stroke:var(--dsw-alias-brand-primary)}',
+      /* 圆环中心的总量：absolute 定位，避免再叠一层 SVG 文本节点（跨浏览器基线不稳）。 */
+      '.stu-donutCenter{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;pointer-events:none}',
+      '.stu-donutTotal{font-size:15px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}',
+      '.stu-donutCaption{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}',
+      '.stu-donutLegend{display:flex;flex-direction:column;gap:6px;min-width:0}',
+      '.stu-donutItem{display:flex;align-items:baseline;gap:8px;min-width:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary)}',
+      '.stu-donutSwatch{width:9px;height:9px;border-radius:2px;flex:none}',
+      '.stu-donutName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.stu-donutShare{color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;white-space:nowrap}',
+      '.stu-donutValue{color:var(--dsw-alias-label-primary);font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap}',
+      /* ---- 图表：折线图（按天趋势） -------------------------------- */
+      /*
+       * SVG 用固定坐标系 0 0 100 30 + preserveAspectRatio="none"：靠 CSS 拉伸自适应宽度，
+       * 不需要量 DOM（量 DOM 要么上 ResizeObserver，要么首帧画错再重画，两者都更脆）。
+       * 代价是 stroke-width 会被非等比缩放，所以线宽必须用 non-scaling-stroke 抵消。
+       * 高度给足 120px 让 100 单位的 viewBox 在纵向几乎不被压缩——否则线会被压扁成糊。
+       */
+      '.stu-trendSvg{display:block;width:100%;height:120px;overflow:visible}',
+      /* 折线不填充（没有可比对的基准，填充面积只会让人误读成"累积量"）。 */
+      '.stu-trendLine{fill:none;stroke:var(--dsw-alias-brand-primary);stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}',
+      /* 基线用 border-l1：它是刻度不是数据，不能和数据同色。 */
+      '.stu-trendBase{stroke:var(--dsw-alias-border-l1);stroke-width:1;vector-effect:non-scaling-stroke}',
+      '.stu-trendDot{fill:var(--dsw-alias-brand-primary)}',
+      '.stu-trendAxis{display:flex;justify-content:space-between;gap:12px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums}',
+      '.stu-trendEmpty{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
       '.stu-notice{padding:8px 12px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
       '.stu-bar{height:4px;border-radius:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden;margin-top:6px}',
       '.stu-barFill{height:100%;background:var(--dsw-alias-brand-primary)}',
@@ -292,6 +354,15 @@ window.__ModuleLoader__.load({
     ];
 
     /**
+     * 环形图段色按**模型次序**取的四档透明度，超过 4 个模型从头循环。
+     *
+     * 和四桶那套同一思路（同品牌色降透明度）：主题令牌里没有分类色板，硬借
+     * `state-*` 会把某个模型染成"警告色/错误色"。透明度循环的代价是第 5 个模型
+     * 和第 1 个同色——所以图例里必须直接写模型名和数值，颜色只负责分组。
+     */
+    const SEGMENT_OPACITY = [1, 0.74, 0.46, 0.24];
+
+    /**
      * 横向堆叠条形图：每个模型一条，四段 = 四个桶。
      *
      * 为什么不画饼图：这里 cacheRead 常占九成以上，饼图会把其余三段压成看不清的
@@ -306,7 +377,9 @@ window.__ModuleLoader__.load({
     function renderChart(rows, t) {
       if (!Array.isArray(rows) || rows.length === 0) return null;
       const max = rows.reduce((peak, row) => Math.max(peak, Number.isFinite(row.total) ? row.total : 0), 0);
-      return h('div', { className: 'stu-chart', key: 'chart' },
+      return h('section', { className: 'stu-figure', key: 'chart' },
+        h('div', { className: 'stu-figureHead' }, t('chartComposition')),
+        h('div', { className: 'stu-chart' },
         rows.map((row) => {
           const total = Number.isFinite(row.total) ? row.total : 0;
           const segments = CHART_BUCKETS
@@ -348,7 +421,278 @@ window.__ModuleLoader__.load({
                 t(segment.labelKey),
                 ' ',
                 h('b', { className: 'stu-legendValue' }, formatExact(segment.value))))));
-        }));
+        })));
+    }
+
+    /**
+     * 把汇总的 `timeline` 归一成界面用的序列。
+     *
+     * 三种"没有趋势可画"的情况在这里就归一到空数组，渲染层于是只有一条分支：
+     *   - 字段**不存在**（旧数据、或宿主还没升级到写 timeline 的版本）；
+     *   - 存在但不是数组（手工改过设置、或将来换成别的形状）；
+     *   - 数组里没有一条带得上日期的记录。
+     *
+     * 为什么"没有 timeline"必须和"timeline 是空数组"走同一条降级路：
+     * 二者在界面上是同一件事——没有可画的数据点。分开处理只会多一条永远走不到的
+     * 分支，而漏处理其中一条的表现是"画出一条歪线"，不报错、最难查。
+     *
+     * 不做排序：契约规定宿主按 day 升序给。这里替它排一次序只会掩盖宿主侧的顺序
+     * 漂移（线上看到的顺序就是真实顺序），而且 `day` 是本地日期字符串，重排还得
+     * 依赖字符串比较的隐式约定。
+     */
+    function normaliseTimeline(summary) {
+      const raw = Array.isArray(summary?.timeline) ? summary.timeline : [];
+      const out = [];
+      for (const item of raw) {
+        if (!isObject(item) || typeof item.day !== 'string' || item.day === '') continue;
+        const total = Number.isFinite(item.total) && item.total > 0 ? item.total : 0;
+        out.push({ day: item.day, total });
+      }
+      return out;
+    }
+
+    /**
+     * `2026-06-01` / `2026-6-1` → `06-01`。
+     *
+     * 手工拆字符串而不是 `new Date(day)`：日期字符串没有时区，`new Date` 会按 UTC
+     * 解析再按本地时区回读，西半球时区下整条趋势会**整体偏移一天**——今天的数据
+     * 标成昨天。偏移一天不会报错，只会让人对着错误的日期找原因。
+     */
+    function shortDay(day) {
+      const match = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(String(day));
+      if (match === null) return String(day);
+      const pad = (value) => value.padStart(2, '0');
+      return pad(match[2]) + '-' + pad(match[3]);
+    }
+
+    /*
+     * 折线图固定坐标系的高度；与 `viewBox` 的后一个数保持一致才有意义。
+     */
+    const TREND_HEIGHT = 30;
+    /*
+     * 折线基线（= 零刻度）在坐标系里的 y。
+     *
+     * 不取满 30 而是留 6 个单位：坐标轴下方要放首尾日期标注，而且零值点贴着
+     * 底边时会和基线糊成一条。基线同时就是**纵轴跨度**——最大值画在 y=0（上沿），
+     * 0 画在 y=baseY，于是"轴从 0 起"在几何上表现为 y 最小是 0、最大是 baseY。
+     *
+     * 注意别把跨度写成 `TREND_HEIGHT - TREND_BASE_Y`（= 4）：那样最高点会落在
+     * y=22，离基线只有 4 个单位——整条折线被压成贴着基线的一根细线，
+     * 图能画出来、也不报错，只是所有起伏都看不出来（自检里有一条正是钉这个）。
+     */
+    const TREND_BASE_Y = 26;
+
+    /**
+     * 折线图的坐标（等距 X + **从 0 起**的 Y）。
+     *
+     * Y 轴必须从 0 起，这是本节唯一"错了会静默误导"的地方：
+     * 若改成从这段数据的 `min` 起，一张每天几百 token 的平线会被画成剧烈起伏的
+     * 山峰，看图的人会以为用量暴涨过——图不报错，只是撒谎。
+     * 所以 `y` 的公式里只有 `total / max`，**没有减 min 的项**。
+     *
+     * X 用 index 等距而不是按真实日期间隔：时间轴上缺日会在等距图上留下一段
+     * 视觉空白（正确），而按日期比例画只会把"那天没数据"挤成零宽。
+     */
+    function trendGeometry(points) {
+      const list = Array.isArray(points) ? points : [];
+      const values = list
+        .map((point) => (Number.isFinite(point?.total) && point.total > 0 ? point.total : 0));
+      const max = values.reduce((peak, value) => Math.max(peak, value), 0);
+      // 纵轴跨度 = 基线到上沿的距离。最大值画在 y=0，0 画在 y=baseY。
+      const span = TREND_BASE_Y;
+      return {
+        width: 100,
+        height: TREND_HEIGHT,
+        baseY: TREND_BASE_Y,
+        // max === 0 时不做除法：全零给一条贴在零刻度上的平线，而不是 NaN 坐标。
+        points: values.map((value, index) => ({
+          x: values.length <= 1 ? 50 : (index / (values.length - 1)) * 100,
+          y: max > 0 ? TREND_BASE_Y - (value / max) * span : TREND_BASE_Y,
+          total: value,
+          index,
+        })),
+        max,
+      };
+    }
+
+    /**
+     * 环形图的段与其图例（按 `row.total / grandTotal` 分配）。
+     *
+     * **分母是 grandTotal，不是 max。** 写成 max 是这里唯一会静默出错的写法：
+     * 占比之和会超过 100%，圆环上后面的段还会叠到前面的段上（视觉上像"少了一个模型"），
+     * 而每个数字单看都"像是对的"。所以分母只出现一次，就是在下面这一行。
+     *
+     * 值为 0 / 负 / 非数的行直接不画：给 0 占比的模型留一个零长段，图例里就会多出
+     * 一条 "0%"——那是"没有用量"和"有模型没上报"的混淆，宁可少一行。
+     */
+    function donutSegments(rows, grandTotal) {
+      const list = Array.isArray(rows) ? rows : [];
+      const total = Number.isFinite(grandTotal) && grandTotal > 0 ? grandTotal : 0;
+      const out = [];
+      if (total <= 0) return out;
+      let offset = 0;
+      for (let index = 0; index < list.length; index += 1) {
+        const value = Number.isFinite(list[index]?.total) && list[index].total > 0 ? list[index].total : 0;
+        if (value <= 0) continue;
+        const ratio = value / total;
+        const length = ratio * 100;
+        // 段色按**模型次序**降透明度（超过 4 个循环）。用段自己的 value 当索引会
+        // 让两个等量模型拿到同一个颜色，图例分不出来。
+        const opacity = SEGMENT_OPACITY[index % SEGMENT_OPACITY.length];
+        out.push({
+          key: typeof list[index].key === 'string' ? list[index].key : String(index),
+          value,
+          ratio,
+          length,
+          offset,
+          opacity,
+        });
+        offset += length;
+      }
+      return out;
+    }
+
+    /** 折线的点序列 → `points` 属性值。 */
+    function polylinePoints(points) {
+      return points.map((point) => point.x + ',' + point.y).join(' ');
+    }
+
+    /**
+     * 环形图（按模型占比）。
+     *
+     * 用 `<circle>` + `stroke-dasharray` / `stroke-dashoffset` 画弧，而不是手算
+     * `path` 的 A 命令：dasharray 的分段语义就是"画一段、空一段"，改成占比只需换
+     * 两个数；手算弧要处理"每段起点终点 + 超过半圈要拆两段 + 整圈退化"，全是能
+     * 静默画错的边角（单个模型 100% 就是其中一种，path 写法下半径等于半径会退化）。
+     *
+     * 整圈的兜底：`stroke-dasharray: 100 100` 在整圈时会被浏览器按 50/50 画成
+     * 两个半圆？——不会，dasharray 只在路径长度内生效，而周长是 100（r=15.9155），
+     * 所以 100 恰好覆盖整圈。**r 的取值就是为这个选的**：2πr ≈ 100，dasharray 的
+     * 数字因而可以当成百分比用，不必再乘周长。
+     */
+    function renderDonut(rows, t) {
+      if (!Array.isArray(rows) || rows.length === 0) return null;
+      const grandTotal = rows.reduce((sum, row) => sum + (Number.isFinite(row.total) ? row.total : 0), 0);
+      const segments = donutSegments(rows, grandTotal);
+      // 总量为 0（全是 0 / 坏数据）时不画空圆环：空圆环看起来像"加载失败"。
+      if (segments.length === 0) return null;
+
+      const radius = 15.9155;
+      const centre = 21;
+      const title = fill(t('donutAria'), { total: formatExact(grandTotal) });
+      const legend = [];
+
+      for (let index = 0; index < segments.length; index += 1) {
+        const segment = segments[index];
+        const row = rows[index] ?? {};
+        const share = Math.round(segment.ratio * 100);
+        const label = fill(t('segmentAria'), {
+          model: row.model === 'unknown' ? t('unattributed') : row.model,
+          share,
+          total: formatExact(segment.value),
+        });
+        // 环上每段带 <title>：鼠标悬停看得到"这是哪个模型"，图例里则给准确数字。
+        legend.push(h('g', { key: 'seg-' + segment.key },
+          h('title', null, label),
+          h('circle', {
+            className: 'stu-donutSeg',
+            cx: centre, cy: centre, r: radius,
+            fill: 'none',
+            strokeWidth: 6,
+            strokeOpacity: segment.opacity,
+            strokeDasharray: segment.length + ' 100',
+            strokeDashoffset: -segment.offset,
+          })));
+      }
+
+      const legendItems = segments.map((segment, index) => {
+        const row = rows[index] ?? {};
+        const share = Math.round(segment.ratio * 100);
+        return h('li', { className: 'stu-donutItem', key: segment.key },
+          h('i', { className: 'stu-donutSwatch', style: { opacity: segment.opacity } }),
+          h('span', { className: 'stu-donutName', title: row.model + ' · ' + row.provider },
+            row.model === 'unknown' ? t('unattributed') : row.model),
+          h('span', { className: 'stu-donutShare' }, share + '%'),
+          h('b', { className: 'stu-donutValue' }, formatExact(segment.value)));
+      });
+
+      return h('section', { className: 'stu-figure', key: 'donut' },
+        h('div', { className: 'stu-figureHead' }, t('chartModels')),
+        h('div', { className: 'stu-donut' },
+          h('div', { className: 'stu-donutWrap' },
+            h('svg', {
+              className: 'stu-donutSvg',
+              viewBox: '0 0 42 42',
+              role: 'img',
+              'aria-label': title,
+            },
+            // 底圈：总占比不足 100% 时（有模型没上报 / 值不完整）露出底色，
+            // 比"圆环缺一角但看不出缺"要诚实。
+            h('circle', { className: 'stu-donutTrack', cx: centre, cy: centre, r: radius, fill: 'none', strokeWidth: 6 }),
+            // -90° 起画：不旋转的话第一段从三点钟方向开始，读图的人会找错起点。
+            h('g', { transform: 'rotate(-90 ' + centre + ' ' + centre + ')' }, legend)),
+            h('div', { className: 'stu-donutCenter' },
+              h('span', { className: 'stu-donutTotal' }, formatTokens(grandTotal)),
+              h('span', { className: 'stu-donutCaption' }, t('donutCenter')))),
+          h('ul', { className: 'stu-donutLegend' }, legendItems)));
+    }
+
+    /**
+     * 折线图（按天趋势）。
+     *
+     * 没有 timeline 就不画——**返回 null，而不是画一条空坐标系**：
+     * 空坐标系在界面上和"这几天用量是 0"长得一模一样，而两者含义相反。
+     * "这段时间没有用量"用一句文案说清楚（`trendEmpty`），
+     * "宿主没给 timeline"则整块不出现（旧数据下页面回到原来的样子）。
+     */
+    function renderTrend(points, t) {
+      const list = Array.isArray(points) ? points : [];
+      if (list.length === 0) return null;
+      const geometry = trendGeometry(list);
+      const first = shortDay(list[0].day);
+      const last = shortDay(list[list.length - 1].day);
+      const range = fill(t('dayRange'), { from: first, to: last });
+
+      const inner = [];
+      if (geometry.max <= 0) {
+        // 全部为 0：不画折线。一条贴在零刻度上的线会被读成"一直有量但很小"。
+        inner.push(h('div', { className: 'stu-trendEmpty', key: 'empty' }, t('trendEmpty')));
+      } else if (geometry.points.length === 1) {
+        // 单点：折线需要两个点，一个点画出来是零长度线（什么都看不见）。
+        inner.push(h('svg', {
+          className: 'stu-trendSvg', viewBox: '0 0 100 30', preserveAspectRatio: 'none',
+          role: 'img', 'aria-label': fill(t('pointAria'), { day: first, total: formatExact(geometry.points[0].total) }),
+          key: 'svg',
+        }, h('line', {
+          className: 'stu-trendBase', x1: 0, y1: geometry.baseY, x2: 100, y2: geometry.baseY,
+        }), h('circle', {
+          className: 'stu-trendDot', cx: geometry.points[0].x, cy: geometry.points[0].y, r: 1.6,
+        }, h('title', null, fill(t('pointAria'), { day: first, total: formatExact(geometry.points[0].total) })))));
+      } else {
+        inner.push(h('svg', {
+          className: 'stu-trendSvg', viewBox: '0 0 100 30', preserveAspectRatio: 'none',
+          role: 'img', 'aria-label': range,
+          key: 'svg',
+        },
+        h('line', { className: 'stu-trendBase', x1: 0, y1: geometry.baseY, x2: 100, y2: geometry.baseY }),
+        h('polyline', { className: 'stu-trendLine', points: polylinePoints(geometry.points) }),
+        geometry.points.map((point, index) => h('circle', {
+          className: 'stu-trendDot',
+          key: 'dot-' + index,
+          cx: point.x, cy: point.y, r: 1.4,
+        }, h('title', null, fill(t('pointAria'), {
+          day: shortDay(list[index]?.day),
+          total: formatExact(point.total),
+        }))))));
+      }
+
+      return h('section', { className: 'stu-figure', key: 'trend' },
+        h('div', { className: 'stu-figureHead' }, t('chartTrend')),
+        ...inner,
+        // 只标首尾日期：30 天全标会糊成一团，而等距 X 轴上中间点的日期可由首尾推出来。
+        h('div', { className: 'stu-trendAxis' },
+          h('span', null, first),
+          h('span', null, last)));
     }
 
     /** 把汇总的 rows 归一成界面用的行（容错，坏数据不炸渲染）。 */
@@ -409,26 +753,41 @@ window.__ModuleLoader__.load({
     function UsagePage(props) {
       const api = props?.api;
       const t = props?.t ?? ((key) => key);
-      const [state, setState] = React.useState({ phase: 'loading', summary: null, persistent: true, error: null });
+      const [state, setState] = React.useState({
+        phase: 'loading', summary: null, persistent: true, error: null, timeline: [], timelinePresent: false,
+      });
       const [page, setPage] = React.useState(0);
       const [busy, setBusy] = React.useState(false);
       const [notice, setNotice] = React.useState(null);
 
       const load = React.useCallback(async () => {
         if (api === undefined || typeof api.describe !== 'function') {
-          setState({ phase: 'ready', summary: null, persistent: false, error: null });
+          setState({ phase: 'ready', summary: null, persistent: false, error: null, timeline: [], timelinePresent: false });
           return;
         }
         try {
           const response = await api.describe();
           const read = readSummary(response);
-          setState({ phase: 'ready', summary: read.summary, persistent: read.persistent, error: null });
+          // timeline 在**读取时**就归一：渲染路径上于是不必再判空/判数组，
+          // 少一处忘了判就是"画一条歪线"。同时留一个 timelinePresent 标志，
+          // 用来区分"宿主没给 timeline"（整块图不出现）和"给了但都是 0"（显示空态文案）。
+          const timeline = normaliseTimeline(read.summary);
+          setState({
+            phase: 'ready',
+            summary: read.summary,
+            persistent: read.persistent,
+            error: null,
+            timeline,
+            timelinePresent: timeline.length > 0,
+          });
         } catch (error) {
           setState({
             phase: 'ready',
             summary: null,
             persistent: true,
             error: error instanceof Error ? error.message : String(error),
+            timeline: [],
+            timelinePresent: false,
           });
         }
       }, [api]);
@@ -465,6 +824,9 @@ window.__ModuleLoader__.load({
       const safePage = Math.min(page, pageCount - 1);
       const slice = rows.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
       const grandTotal = rows.reduce((sum, row) => sum + row.total, 0);
+      // 趋势数据也在 hook 之后、首个 return 之前取出（这个位置本来就是语句层）。
+      const trendPoints = Array.isArray(state.timeline) ? state.timeline : [];
+      const hasTrend = state.timelinePresent === true;
 
       const body = [];
       if (state.phase === 'loading') {
@@ -474,8 +836,18 @@ window.__ModuleLoader__.load({
       } else if (rows.length === 0) {
         body.push(h('div', { className: 'stu-empty', key: 'empty' }, t('emptyAll')));
       } else {
-        // 图表放在表格之上：先给"谁大 / 构成如何"的直觉，再给精确读数。
-        // 图表用**全部行**而不是当前页——它是总览，翻页不该改变它。
+        /*
+         * 三个视图，三种问题，顺序从"整体"到"细节"：
+         *   环形图 → 谁占大头；折线图 → 什么时候用的；堆叠条 → 每个模型内部构成。
+         * 图表一律用**全部行 / 全部天**而不是当前页——它们是总览，翻页不该改变它。
+         *
+         * 折线用 `hasTrend &&` 而不是 `renderTrend(...) ?? null`：后者在 React 里
+         * 会把 `null` 当成一个子节点（渲染成空），语义上等价但要多想一步；
+         * 显式条件也顺便让"没有 timeline 就整块不出现"这件事在源码里可断言。
+         */
+        const donut = renderDonut(rows, t);
+        if (donut !== null) body.push(donut);
+        if (hasTrend) body.push(renderTrend(trendPoints, t));
         body.push(renderChart(rows, t));
         const head = h('thead', { key: 'thead' }, h('tr', null,
           h('th', { className: 'stu-nameCol' }, t('colModel')),
@@ -809,6 +1181,29 @@ window.__ModuleLoader__.load({
       normaliseRows,
       fill,
       stampOf,
+      /*
+       * 图表的纯函数也走这个接缝。
+       *
+       * 理由和 formatTokens 一样但更强：图**画错不会抛错**。Y 轴从 min 起、
+       * 环形图分母写成 max、缺 timeline 时画空坐标系——三者的表现都是"渲染成功的
+       * 一张图"，静态形状断言看不见。只有把归一化数学取出来跑真实输入，才能钉住。
+       */
+      normaliseTimeline,
+      shortDay,
+      trendGeometry,
+      donutSegments,
+      polylinePoints,
+      /*
+       * 两个渲染函数也暴露出去。
+       *
+       * 只有纯函数数学可验证是不够的：**"降级分支有没有接上"** 是另一类错误。
+       * 例如 `trendGeometry` 对空序列返回零个点（数学正确），但渲染层若写成
+       * `points.length === 1 ? 圆点 : 折线`，单点之外的 0 点就会走进折线分支，
+       * 画出一条 `points=""` 的隐形线——算式全对，界面全错。自检脚本因此还要
+       * 拿真实的行/序列走一遍渲染，按 className 找节点来断言存在与缺失。
+       */
+      renderDonut,
+      renderTrend,
       // 组件本身也暴露出去，供渲染自检直接驱动。
       UsagePage,
       SessionMeter,

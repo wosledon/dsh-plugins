@@ -23,7 +23,15 @@
  *   - 有 `scanLimit` 上限，超出时把 `truncated=true` 如实报给界面；
  *   - 单个会话读失败只跳过它并计数，不让一个坏日志毁掉整次扫描。
  */
-import { applyAttempt, emptyFold, rowsOf } from './fold.js';
+import { applyAttempt, applyTimeline, emptyFold, emptyTimeline, rowsOf, timelineRows } from './fold.js';
+
+/**
+ * 时间轴最多保留多少天。
+ *
+ * 会话历史可能有几年；把上千个点塞进折线图既画不清也没意义。保留**最近**的，
+ * 与"看近期趋势"的意图一致。这是可选数据的上限，不影响按模型的汇总（那个不截断）。
+ */
+export const TIMELINE_MAX_DAYS = 90;
 
 /**
  * 各来源的适配：把两种 API 形状归一成 `listHeaders` / `readEvents`。
@@ -123,11 +131,17 @@ export async function buildSummary(probe, options = {}) {
   const window = ordered.slice(0, limit);
 
   let state = emptyFold();
+  let timeline = emptyTimeline();
   let skipped = 0;
   for (const entry of window) {
     try {
       const events = await adapter.readEvents(probe.source, entry.id);
-      for (const event of events) state = applyAttempt(state, event);
+      for (const event of events) {
+        state = applyAttempt(state, event);
+        // 时间轴按**事件自身的时间**归日，而不是会话的 createdAt —— 会话可能
+        // 横跨多天，按 createdAt 会把后几天的用量全算到第一天。
+        timeline = applyTimeline(timeline, event);
+      }
     } catch {
       // 一个会话的日志坏了/被截断，不该让整次扫描失败。
       skipped += 1;
@@ -136,6 +150,8 @@ export async function buildSummary(probe, options = {}) {
 
   return {
     rows: rowsOf(state),
+    // 折线图的数据源。缺失时界面必须降级为"不画"，而不是画一条歪的。
+    timeline: timelineRows(timeline, TIMELINE_MAX_DAYS),
     scanned: window.length,
     total: ordered.length,
     truncated: ordered.length > window.length,

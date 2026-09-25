@@ -8,13 +8,17 @@
 import {
   addBuckets,
   applyAttempt,
+  applyTimeline,
   attemptOf,
   bucketsOf,
+  dayKeyOf,
   emptyBuckets,
   emptyFold,
+  emptyTimeline,
   foldEvents,
   formatExact,
   formatTokens,
+  timelineRows,
   modelIdentityOf,
   rowsOf,
   totalOf,
@@ -232,6 +236,48 @@ console.log('=== 7. 紧凑格式化 ===');
   check('formatExact 千分位', formatExact(1234567) === '1,234,567', formatExact(1234567));
   check('formatExact 三位以下不加逗号', formatExact(999) === '999');
   check('formatExact 容错', formatExact(undefined) === '0');
+}
+
+console.log('');
+console.log('=== 8. 时间轴：按事件时间归日 ===');
+{
+  const at = (ms, p, m, u) => ({
+    type: 'assistant/message',
+    time: ms,
+    data: { turn: 1, step: 1, message: { role: 'assistant', source: { kind: 'model', provider: p, model: m } }, stream: [], usage: u },
+  });
+  // 本地正午，避开时区边界把日期推前/后一天。
+  const day1 = new Date(2026, 5, 1, 12, 0, 0).getTime();
+  const day2 = new Date(2026, 5, 2, 12, 0, 0).getTime();
+
+  check('dayKeyOf 返回本地日期 YYYY-MM-DD', dayKeyOf(day1) === '2026-06-01', String(dayKeyOf(day1)));
+  check('dayKeyOf 对无效时间戳返回 null', dayKeyOf(NaN) === null && dayKeyOf(undefined) === null);
+
+  const empty = emptyTimeline();
+  check('空时间轴是空对象', Object.keys(empty).length === 0);
+
+  let tl = applyTimeline(empty, at(day1, 'a', 'm', { inputTokens: 100, outputTokens: 10 }));
+  tl = applyTimeline(tl, at(day1, 'b', 'n', { inputTokens: 50, outputTokens: 5 }));
+  tl = applyTimeline(tl, at(day2, 'a', 'm', { inputTokens: 7, outputTokens: 3 }));
+  check('两天各自成键', Object.keys(tl).length === 2, JSON.stringify(Object.keys(tl)));
+  check('同一天不同模型合并到同一天', tl['2026-06-01'].buckets.uncachedInputTokens === 150);
+  check('同一天的 attempts 累加', tl['2026-06-01'].attempts === 2);
+  check('原始时间轴未被修改（纯函数）', Object.keys(empty).length === 0);
+
+  // 没有 time 的事件刻意不进轴：宁可少一个点，也不假装它属于某一天。
+  const noTime = { type: 'assistant/message', data: { message: { role: 'assistant', source: { kind: 'model', provider: 'x', model: 'y' } }, usage: { inputTokens: 1, outputTokens: 1 } } };
+  check('无 time 的事件不进时间轴（返回同一引用）', applyTimeline(empty, noTime) === empty);
+  check('无关事件不进时间轴', applyTimeline(empty, { type: 'turn/end', time: day1, data: {} }) === empty);
+
+  const rows = timelineRows(tl, 90);
+  check('按日期升序摊平', rows.map((row) => row.day).join(',') === '2026-06-01,2026-06-02', rows.map((row) => row.day).join(','));
+  check('每天带 total', rows[0].total === 165 && rows[1].total === 10, JSON.stringify(rows.map((r) => r.total)));
+  check('每天带 attempts', rows[0].attempts === 2 && rows[1].attempts === 1);
+  check('每天带四桶', rows[0].buckets.uncachedInputTokens === 150 && rows[0].buckets.outputTokens === 15);
+
+  check('limit 保留最近 N 天而不是最早 N 天', timelineRows(tl, 1).map((row) => row.day).join(',') === '2026-06-02');
+  check('limit 非法时保留全部', timelineRows(tl, 0).length === 2 && timelineRows(tl, -5).length === 2);
+  check('timelineRows(null) 返回空数组', JSON.stringify(timelineRows(null)) === '[]');
 }
 
 console.log('');

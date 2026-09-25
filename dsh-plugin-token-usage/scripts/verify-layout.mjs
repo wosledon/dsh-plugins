@@ -10,7 +10,13 @@
  *   4. 布局约定（不用 break-all、根容器高度归外壳、数字列 tabular-nums、浮层用 absolute）；
  *   5. 文案键完整性（client.js 内的 zh/en 两份对象互不缺不多、无死引用、无死键）；
  *   6. Hook 顺序（所有 hook 必须在首个 return 之前——违反过就是 React #310 + 整个 slot 空白）；
- *   7. 席位注册（sidebar.panellist / main / 会话头部 utilities，且不顶掉官方控件）。
+ *   7. 席位注册（sidebar.panellist / main / 会话头部 utilities，且不顶掉官方控件）；
+ *   8. 图表语义（把 client.js 用 React 桩跑起来，跑真实的纯函数：折线 Y 轴从 0 起、
+ *      环形图分母是 grandTotal、缺 timeline / 单点 / 全零时的降级——这些错了都不报错，
+ *      只是画出一张撒谎的图，正则看不见）。
+ *
+ * 第 8 组是唯一会**执行**被检代码的一组，桩与 verify-contract.mjs 保持一致：
+ * 同一份 client.js 被两个脚本用不同的桩跑，会让"这里过那里不过"变成常态。
  *
  * 与定时任务插件的差异：本插件的界面文案不在 locale/*.json 里，而是 client.js 内部的
  * `const zh = {...}` / `const en = {...}`；locale/*.json 只放插件卡片 meta 与给宿主用的键。
@@ -20,7 +26,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -550,6 +556,121 @@ check(
   /opacity:\.74/.test(cssBlock) && /opacity:\.46/.test(cssBlock) && /opacity:\.24/.test(cssBlock),
 );
 
+/*
+ * 环形图与折线图。
+ *
+ * 这一组只看**形状**（有没有用对 SVG 元素、有没有走固定坐标系）。归一化数学
+ * （Y 轴是否从 0 起、环形图分母是不是 grandTotal、缺 timeline 时是否降级）
+ * 在第 8 组用运行时纯函数跑真实输入验证——静态正则看不出算式对不对。
+ *
+ * 为什么两处都要：形状对了算式错 = 画出一张撒谎的图；算式对了元素错 =
+ * 画不出来。两类错误的排查手段完全不同，不该混在一条断言里。
+ */
+check('渲染了环形图（renderDonut 被调用且进入 body）',
+  /const donut = renderDonut\(rows, t\)/.test(source) && /body\.push\(donut\)/.test(source));
+check(
+  '环形图用 SVG circle + stroke-dasharray / stroke-dashoffset 画分段（手算 path 弧容易在整圈退化）',
+  /strokeDasharray:\s*segment\.length \+ ' 100'/.test(source)
+    && /strokeDashoffset:\s*-segment\.offset/.test(source)
+    && /className:\s*'stu-donutSeg'/.test(source),
+);
+check(
+  '环形图从 12 点方向起画（rotate(-90 …)），否则第一段起点在三点钟方向',
+  /transform:\s*'rotate\(-90 ' \+ centre/.test(source),
+);
+check(
+  '环形图段色按模型次序取透明度（不是按数值），超过 4 个循环',
+  /const opacity = SEGMENT_OPACITY\[index % SEGMENT_OPACITY\.length\]/.test(source)
+    && /const SEGMENT_OPACITY = \[1, 0\.74, 0\.46, 0\.24\]/.test(source),
+);
+check(
+  '环形图圆心显示总量（formatTokens），不是空白',
+  /className:\s*'stu-donutTotal'[\s\S]{0,40}formatTokens\(grandTotal\)/.test(source),
+);
+check(
+  '环形图有独立图例（模型名 + 占比 + 数值），不靠颜色读图',
+  /className:\s*'stu-donutLegend'/.test(source)
+    && /className:\s*'stu-donutName'/.test(source)
+    && /className:\s*'stu-donutShare'/.test(source)
+    && /className:\s*'stu-donutValue'/.test(source),
+);
+check('环形图有底圈（占比不满 100% 时露出底色，不假装是满圈）',
+  /className:\s*'stu-donutTrack'/.test(source));
+check(
+  '环形图每个模型有 role=img 的 aria-label（无障碍，不只是彩色弧）',
+  /'aria-label':\s*title/.test(source) && /fill\(t\('donutAria'\),\s*\{\s*total:/.test(source),
+);
+
+check('渲染了折线图（renderTrend 被调用）', /renderTrend\(trendPoints, t\)/.test(source));
+check(
+  '折线图用固定 viewBox + preserveAspectRatio="none"（自适应容器宽度，不量 DOM）',
+  /viewBox:\s*'0 0 100 30'/.test(source) && /preserveAspectRatio:\s*'none'/.test(source),
+);
+check(
+  '折线用 polyline + 点序列（不是一堆 div）',
+  /h\('polyline'/.test(source) && /points:\s*polylinePoints\(geometry\.points\)/.test(source),
+);
+/*
+ * Y 轴从 0 起：`y = 基线 - (value / max) * 跨度`，全零时落在基线上。
+ * 这条断言盯着算式本身——把 `value / max` 改成 `(value - min) / (max - min)`
+ * 会同时打掉它和第 8 组的行为断言（负向对照 A 用的就是这条）。
+ */
+check(
+  '折线 Y 轴从 0 起（y 里只有 value/max，没有减 min 的项）',
+  /y:\s*max > 0 \? TREND_BASE_Y - \(value \/ max\) \* span : TREND_BASE_Y/.test(source)
+    && /const span = TREND_BASE_Y/.test(source)
+    && !/\bmin\b/.test(extractFunctionBody(source, 'trendGeometry') ?? ''),
+  '若改成从 min 起，一条平线会被画成剧烈起伏——图不报错，只是撒谎',
+);
+check(
+  '折线有零刻度基线（线是刻度不是数据，用 border-l1 不用品牌色）',
+  /className:\s*'stu-trendBase'/.test(source) && /\.stu-trendBase\{[^}]*--dsw-alias-border-l1/.test(cssBlock),
+);
+check(
+  '折线只标首尾日期（MM-DD），不逐日标（30 天会糊成一团）',
+  /const first = shortDay\(list\[0\]\.day\)/.test(source)
+    && /const last = shortDay\(list\[list\.length - 1\]\.day\)/.test(source)
+    && /className:\s*'stu-trendAxis'/.test(source),
+);
+check(
+  '单点时画圆点而不是零长度折线（单点折线什么都看不见）',
+  /geometry\.points\.length === 1/.test(source) && /className:\s*'stu-trendDot'/.test(source),
+);
+check(
+  '每个数据点带 <title>（日期 + 数值；只靠形状读不出具体哪天多少）',
+  (source.match(/h\('title',\s*null,/g) ?? []).length >= 3,
+  '实际 ' + (source.match(/h\('title',\s*null,/g) ?? []).length + ' 处',
+);
+check(
+  '没有 timeline 时整块折线图不出现（不是画一条空坐标系）',
+  /if \(hasTrend\) body\.push\(renderTrend\(trendPoints, t\)\)/.test(source)
+    && /timelinePresent:\s*timeline\.length > 0/.test(source),
+);
+check(
+  '图表顺序：环形图 → 折线图 → 按模型构成（从整体到细节）',
+  (() => {
+    const donut = source.indexOf('body.push(donut)');
+    const trend = source.indexOf('body.push(renderTrend(trendPoints, t))');
+    const composition = source.indexOf('body.push(renderChart(rows, t))');
+    return donut > 0 && trend > donut && composition > trend;
+  })(),
+);
+check(
+  '客户端仍然只 require(react)：没有引入任何图表库',
+  !/require\(\s*'(?!react')[^']+'\s*\)/.test(source)
+    && !/\b(d3|chart\.js|recharts|echarts|apexcharts|plotly|visx|nivo)\b/i.test(source),
+);
+/*
+ * 裸颜色检查要在**剥掉注释之后**做：注释里会合法地出现 `#310`（React 的 hook 顺序
+ * 错误码就是四个十六进制字符），把它算成颜色会让这条规则常红——常红的规则会被忽略。
+ */
+const jsxPartCode = jsxPart.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+check(
+  'SVG 的图形属性也不写裸颜色（stroke/fill 一律 var(--dsw-alias-*)）',
+  !/#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/.test(jsxPartCode),
+  (jsxPartCode.match(/#[0-9a-fA-F]{3,8}\b|\brgba?\([^)]*\)/g) ?? []).join(', '),
+);
+
 /* ---------------- 7. 席位注册 ---------------- */
 console.log('');
 console.log('[7. 席位注册]');
@@ -626,6 +747,337 @@ check(
   '席位注册不再用 try/catch 吞错（吞掉只会让席位静默消失，boot 审计仍会记该 entry 失败）',
   !/slot '\s*\+ label \+ '\s*failed/.test(source),
 );
+
+/* ---------------- 8. 图表语义（跑真实的纯函数，不靠正则） ---------------- */
+console.log('');
+console.log('[8. 图表语义：归一化数学必须对，错了不报错只是撒谎]');
+
+/*
+ * 为什么这一组必须真跑代码而不是看源码文本：
+ *
+ * 图表的三种致命错误——**Y 轴不从 0 起**、**环形图分母写成 max**、
+ * **timeline 缺失/单点/全零时的降级**——在界面上全都是"渲染成功的一张图"。
+ * 正则能确认"有一段算 y 的代码"，但确认不了那段算式的分母是谁、基线在哪。
+ * 所以这里把 client.js 用桩跑起来，从 `__internals` 取纯函数跑真实输入。
+ *
+ * 桩必须和 verify-contract.mjs 同一套（同一份 client.js 被两个脚本用两种桩跑，
+ * 桩不同会让"这里过那里不过"变成常态）：模块顶层只用到 React.createElement，
+ * hook 只在组件渲染时调用，而本脚本不渲染组件。
+ */
+const ReactStub = {
+  createElement: (type, props, ...children) => ({ type, props, children }),
+  Fragment: Symbol.for('react.fragment'),
+  useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
+  useEffect: () => {},
+  useLayoutEffect: () => {},
+  useMemo: (factory) => (typeof factory === 'function' ? factory() : undefined),
+  useCallback: (callback) => callback,
+  useRef: (value) => ({ current: value === undefined ? null : value }),
+};
+
+let internals = null;
+let loadError = null;
+{
+  let captured = null;
+  const previousWindow = globalThis.window;
+  globalThis.window = { __ModuleLoader__: { load: (def) => { captured = def; } } };
+  try {
+    await import(pathToFileURL(path.join(root, 'client.js')).href);
+    if (captured === null || typeof captured.factory !== 'function') {
+      loadError = new Error('client.js 没有调用 __ModuleLoader__.load({ factory })');
+    } else {
+      internals = captured.factory((name) => (name === 'react' ? ReactStub : undefined))?.__internals ?? null;
+      if (internals === null) loadError = new Error('factory 返回值缺少 __internals 测试接缝');
+    }
+  } catch (error) {
+    loadError = error;
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+}
+check(
+  'client.js 能在 React 桩下装载并取出 __internals（图表纯函数可验证的前提）',
+  internals !== null,
+  loadError === null ? '' : (loadError instanceof Error ? loadError.message : String(loadError)),
+);
+
+const need = (name) => (internals !== null && typeof internals[name] === 'function' ? internals[name] : null);
+const normaliseTimelineFn = need('normaliseTimeline');
+const shortDayFn = need('shortDay');
+const trendGeometryFn = need('trendGeometry');
+const donutSegmentsFn = need('donutSegments');
+const polylinePointsFn = need('polylinePoints');
+
+check(
+  '__internals 暴露图表纯函数（normaliseTimeline / trendGeometry / donutSegments / shortDay）',
+  normaliseTimelineFn !== null && shortDayFn !== null && trendGeometryFn !== null
+    && donutSegmentsFn !== null && polylinePointsFn !== null,
+);
+
+/* ---- 8.a 折线图：Y 轴必须从 0 起 ---- */
+if (trendGeometryFn !== null && shortDayFn !== null && polylinePointsFn !== null) {
+  /*
+   * 这组数字是刻意挑的：900 / 1000 两条平线，min 接近 max。
+   * 从 0 起 → 两个点都贴近零刻度（差 1 个单位），平；从 min 起 → 一个贴顶一个贴底（差 24），
+   * 看起来像暴涨十倍。同一份数据，两种画法给人的结论相反，而都不报错。
+   */
+  const flat = trendGeometryFn([{ total: 900 }, { total: 1000 }]);
+  check(
+    'Y 轴从 0 起：900 与 1000 在图上高度接近（差 ≤ 3 个单位）',
+    Math.abs(flat.points[0].y - flat.points[1].y) <= 3,
+    'y=' + flat.points.map((point) => point.y).join(' / '),
+  );
+  check(
+    '最大值落在轴上沿（value === max → y === 0）',
+    flat.points[1].y === 0,
+    String(flat.points[1].y),
+  );
+
+  const zeros = [{ day: '2026-06-01', total: 0 }, { day: '2026-06-02', total: 0 }];
+  const zeroGeometry = trendGeometryFn(zeros);
+  check('全零时 max 为 0', zeroGeometry.max === 0, String(zeroGeometry.max));
+  check(
+    '全零时不做除法（不产生 NaN 坐标），所有点落在零刻度上',
+    zeroGeometry.points.every((point) => point.y === zeroGeometry.baseY && Number.isFinite(point.y)),
+    zeroGeometry.points.map((point) => point.y).join(' / '),
+  );
+  check(
+    '零刻度（baseY）不在坐标系底边上（否则 0 值和基线糊成一条）',
+    zeroGeometry.baseY < zeroGeometry.height && zeroGeometry.baseY > 0,
+    'baseY=' + zeroGeometry.baseY + ' height=' + zeroGeometry.height,
+  );
+
+  const single = trendGeometryFn([{ day: '2026-06-05', total: 42 }]);
+  check(
+    '单点时 X 居中（x === 50）而不是贴在左沿或被 0 除成 NaN',
+    single.points.length === 1 && single.points[0].x === 50 && Number.isFinite(single.points[0].y),
+    JSON.stringify(single.points),
+  );
+
+  const two = trendGeometryFn([{ day: '2026-06-01', total: 10 }, { day: '2026-06-11', total: 20 }]);
+  check(
+    'X 用 index 等距（首点 0、末点 100），不按真实日期间隔比例',
+    two.points[0].x === 0 && two.points[1].x === 100,
+    two.points.map((point) => point.x).join(' / '),
+  );
+  check(
+    '负值 / 非数被当成 0，不产生朝下的点（数据坏了也不画错）',
+    trendGeometryFn([{ day: '2026-06-01', total: -5 }, { day: '2026-06-02', total: 'x' }])
+      .points.every((point) => point.total === 0 && Number.isFinite(point.y)),
+  );
+  check('trendGeometry 对非数组输入不抛（降级到空序列）',
+    trendGeometryFn(null).points.length === 0 && trendGeometryFn(undefined).max === 0);
+
+  check(
+    'polylinePoints 输出 "x,y x,y"（而不是数组字面量被塞进属性）',
+    polylinePointsFn([{ x: 0, y: 26 }, { x: 100, y: 0 }]) === '0,26 100,0',
+    polylinePointsFn([{ x: 0, y: 26 }, { x: 100, y: 0 }]),
+  );
+
+  check(
+    'shortDay 手工拆日期字符串（不用 new Date：按 UTC 解析会让趋势整体偏移一天）',
+    shortDayFn('2026-06-01') === '06-01' && shortDayFn('2026-6-9') === '06-09',
+    shortDayFn('2026-06-01') + ' / ' + shortDayFn('2026-6-9'),
+  );
+  check('shortDay 对非日期字符串原样返回，不抛', shortDayFn('unknown') === 'unknown');
+} else {
+  check('折线图纯函数可取（否则 Y 轴从 0 起无法验证）', false);
+}
+
+/* ---- 8.b timeline 缺失 / 空 / 坏数据时必须降级 ---- */
+if (normaliseTimelineFn !== null) {
+  check('timeline 字段不存在时归一为空数组（旧数据不再画折线）',
+    normaliseTimelineFn({ rows: [] }).length === 0 && normaliseTimelineFn({}).length === 0);
+  check('timeline 是空数组时归一为空数组',
+    normaliseTimelineFn({ timeline: [] }).length === 0);
+  check('timeline 不是数组时归一为空数组（形状漂移不炸渲染）',
+    normaliseTimelineFn({ timeline: { '2026-06-01': 5 } }).length === 0
+      && normaliseTimelineFn({ timeline: 'x' }).length === 0
+      && normaliseTimelineFn(null).length === 0);
+  check('没有 day 的条目被丢掉（而不是画成 "undefined"）',
+    normaliseTimelineFn({ timeline: [{ total: 5 }, null, { day: '', total: 5 }] }).length === 0);
+  check('坏 total（负 / 非数 / NaN）归一到 0，不让 NaN 进坐标计算',
+    normaliseTimelineFn({ timeline: [{ day: '2026-06-01', total: -1 }, { day: '2026-06-02', total: 'x' }] })
+      .every((point) => point.total === 0));
+  check('单天 timeline 归一后仍是一天（渲染层据此画圆点）',
+    normaliseTimelineFn({ timeline: [{ day: '2026-06-01', total: 5 }] }).length === 1);
+  check(
+    'normaliseTimeline 不重排顺序（宿主按 day 升序给，重排会掩盖宿主侧顺序漂移）',
+    normaliseTimelineFn({ timeline: [{ day: '2026-06-03', total: 1 }, { day: '2026-06-01', total: 2 }] })
+      .map((point) => point.day).join(',') === '2026-06-03,2026-06-01',
+  );
+} else {
+  check('timeline 归一函数可取（否则缺 timeline 的降级无法验证）', false);
+}
+
+/* ---- 8.c 环形图：分母必须是 grandTotal ---- */
+if (donutSegmentsFn !== null) {
+  /*
+   * 这组数字同样刻意：总量 100，但 max 是 60（最大的那个模型）。
+   * 用 grandTotal 当分母 → 三段 60/30/10，占比和 = 100%，offset 递增到 90。
+   * 用 max 当分母 → 100%/50%/16.7%，和 > 100%，第二段会盖到第一段上
+   * （视觉上像"少了一个模型"），而每个数字单看都像对的。
+   */
+  const rows = [
+    { key: 'a', total: 60 },
+    { key: 'b', total: 30 },
+    { key: 'c', total: 10 },
+  ];
+  const segments = donutSegmentsFn(rows, 100);
+  check('环形图分段数与正数模型数一致（值为 0 的不画）', segments.length === 3, String(segments.length));
+  check(
+    '环形图占比按 grandTotal（60/100 = 60%，不是 60/60 = 100%）',
+    segments.map((segment) => segment.length).join(',') === '60,30,10',
+    segments.map((segment) => segment.length).join(','),
+  );
+  check(
+    '环形图各段占比之和恰好 100%（分母写错会立刻超过）',
+    Math.abs(segments.reduce((sum, segment) => sum + segment.length, 0) - 100) < 1e-9,
+    String(segments.reduce((sum, segment) => sum + segment.length, 0)),
+  );
+  check(
+    '环形图各段 offset 依次递增（dashoffset 用 -offset，段与段不重叠）',
+    segments.map((segment) => segment.offset).join(',') === '0,60,90',
+    segments.map((segment) => segment.offset).join(','),
+  );
+  check(
+    '环形图段色按模型次序取透明度，超过 4 个循环（两个等量模型不会同色）',
+    donutSegmentsFn([{ key: 'a', total: 1 }, { key: 'b', total: 1 }], 2)
+      .map((segment) => segment.opacity).join(',') === '1,0.74'
+      && donutSegmentsFn(
+        Array.from({ length: 5 }, (unused, index) => ({ key: String(index), total: 1 })), 5,
+      ).map((segment) => segment.opacity).join(',') === '1,0.74,0.46,0.24,1',
+  );
+
+  check('单个模型 100% 时画一段整圈（length === 100）',
+    donutSegmentsFn([{ key: 'only', total: 7 }], 7).map((segment) => segment.length).join(',') === '100',
+    donutSegmentsFn([{ key: 'only', total: 7 }], 7).map((segment) => segment.length).join(','));
+  check('grandTotal 为 0 时不画任何段（空圆环看起来像加载失败）',
+    donutSegmentsFn(rows, 0).length === 0 && donutSegmentsFn(rows, NaN).length === 0);
+  check('全 0 / 坏数据的行被跳过，不留 0% 的图例项',
+    donutSegmentsFn([{ key: 'a', total: 0 }, { key: 'b', total: 10 }, { key: 'c', total: -3 }], 10).length === 1);
+  check('donutSegments 对非数组输入不抛（降级到空）',
+    donutSegmentsFn(null, 100).length === 0 && donutSegmentsFn(undefined, 100).length === 0);
+} else {
+  check('环形图纯函数可取（否则占比分母无法验证）', false);
+}
+
+/* ---- 8.d 渲染出来的树：降级分支到底有没有接上 ---- */
+const renderDonutFn = need('renderDonut');
+const renderTrendFn = need('renderTrend');
+
+/**
+ * 按 className 在 React 元素树里找节点。
+ *
+ * 桩把 `h('div', {…}, …)` 变成 `{ type, props, children }`，所以这里能像查 DOM
+ * 一样按类名找——**渲染自检必须看渲染结果**：算式对、元素也写对了，但分支接错
+ * （例如单点走折线分支画出 `points=""`）在源码正则里看不出来。
+ */
+function findByClass(node, pattern, out) {
+  if (node === null || node === undefined || typeof node !== 'object') return out;
+  if (Array.isArray(node)) {
+    for (const item of node) findByClass(item, pattern, out);
+    return out;
+  }
+  const className = typeof node.props?.className === 'string' ? node.props.className : '';
+  if (pattern.test(className)) out.push(node);
+  findByClass(node.children, pattern, out);
+  return out;
+}
+function hasClass(node, pattern) {
+  return findByClass(node, pattern, []).length > 0;
+}
+function countClass(node, pattern) {
+  return findByClass(node, pattern, []).length;
+}
+
+/** 与组件里同一个 t：键→中文，用于结构检查时占位符能真的被替换掉。 */
+const tFor = (key) => (valueOf(zhBody, key) ?? key);
+
+if (renderDonutFn !== null && renderTrendFn !== null) {
+  const pageRows = [
+    { key: 'a', provider: 'p1', model: 'm1', total: 60 },
+    { key: 'b', provider: 'p2', model: 'm2', total: 30 },
+    { key: 'c', provider: 'p3', model: 'm3', total: 10 },
+  ];
+  const donutTree = renderDonutFn(pageRows, tFor);
+
+  check('环形图渲染出 3 个弧段（与 3 个正数模型一一对应）',
+    countClass(donutTree, /stu-donutSeg/) === 3, String(countClass(donutTree, /stu-donutSeg/)));
+  check('环形图每段都带 dasharray / dashoffset 属性（缺一个就画不出分段）',
+    findByClass(donutTree, /stu-donutSeg/, []).every((node) =>
+      typeof node.props.strokeDasharray === 'string' && Number.isFinite(node.props.strokeDashoffset)));
+  check(
+    '环形图弧段是 <circle>（dasharray 的分段语义只对闭合路径成立）',
+    findByClass(donutTree, /stu-donutSeg/, []).every((node) => node.type === 'circle'),
+  );
+  check('环形图有底圈（占比不满 100% 时露出底色）', hasClass(donutTree, /stu-donutTrack/));
+  check('环形图有图例列表与色块（颜色只负责分组，读数靠图例）',
+    hasClass(donutTree, /stu-donutLegend/) && countClass(donutTree, /stu-donutSwatch/) === 3);
+  check('单个模型时也画出一整圈（length === 100 的弧）',
+    (() => {
+      const single = findByClass(
+        renderDonutFn([{ key: 'only', provider: 'p', model: 'm', total: 5 }], tFor), /stu-donutSeg/, [],
+      );
+      return single.length === 1 && String(single[0].props.strokeDasharray).startsWith('100 ');
+    })());
+  check('总量为 0 时不渲染环形图（空圆环看起来像加载失败）',
+    renderDonutFn([{ key: 'a', provider: 'p', model: 'm', total: 0 }], tFor) === null
+      || !hasClass(renderDonutFn([{ key: 'a', provider: 'p', model: 'm', total: 0 }], tFor), /stu-donutSeg/));
+
+  const manyPoints = [
+    { day: '2026-06-01', total: 10 },
+    { day: '2026-06-02', total: 30 },
+    { day: '2026-06-03', total: 20 },
+  ];
+  const trendTree = renderTrendFn(manyPoints, tFor);
+  check('折线图渲染出 polyline（多点时才有折线）', hasClass(trendTree, /stu-trendLine/));
+  check('折线每条数据点都画了圆点与 <title>（悬停能看到具体哪天多少）',
+    countClass(trendTree, /stu-trendDot/) === 3
+      && findByClass(trendTree, /stu-trendDot/, []).every((node) => (node.children ?? []).some((child) => child?.type === 'title')));
+  check('折线图标注首尾日期（只标两个，不逐日标）',
+    countClass(trendTree, /stu-trendAxis/) === 1
+      && JSON.stringify(findByClass(trendTree, /stu-trendAxis/, [])[0]?.children ?? [])
+        .includes('06-01'));
+  check('折线图有零刻度基线', hasClass(trendTree, /stu-trendBase/));
+
+  const singleTree = renderTrendFn([{ day: '2026-06-05', total: 42 }], tFor);
+  check(
+    '单点时画圆点、不画 polyline（零长度折线什么都看不见）',
+    countClass(singleTree, /stu-trendDot/) === 1 && !hasClass(singleTree, /stu-trendLine/),
+  );
+  const zeroTree = renderTrendFn([{ day: '2026-06-01', total: 0 }, { day: '2026-06-02', total: 0 }], tFor);
+  check(
+    '全是 0 时不画折线也不画点，只留一句空态文案（一条贴基线的线会被读成"一直有量但很小"）',
+    !hasClass(zeroTree, /stu-trendLine/) && !hasClass(zeroTree, /stu-trendDot/)
+      && hasClass(zeroTree, /stu-trendEmpty/),
+  );
+  check(
+    '空序列不渲染折线图（缺 timeline 时整块不出现，而不是一个空坐标系）',
+    renderTrendFn([], tFor) === null && renderTrendFn(null, tFor) === null,
+  );
+  check(
+    '归一化与渲染接得上：没有 timeline 的 summary → 空序列 → 不渲染',
+    renderTrendFn(normaliseTimelineFn({ rows: [] }), tFor) === null,
+  );
+} else {
+  check('图表渲染函数可取（否则降级分支有没有接上无法验证）', false);
+}
+
+/* ---- 8.e 新增文案键：中英一致、占位符一致、都不含裸含义 ---- */
+if (internals !== null && typeof internals.trendGeometry === 'function') {
+  // 文案表本身在第 5 组查；这里确认新键是"两处都有且真的被渲染用到"。
+  for (const key of ['chartModels', 'chartTrend', 'chartComposition', 'donutAria', 'segmentAria',
+    'donutCenter', 'trendEmpty', 'dayRange', 'pointAria']) {
+    check(
+      '新增文案键 ' + key + ' 在中英两表都存在且被 t(…) 引用',
+      new RegExp('^\\s*' + key + '\\s*:', 'm').test(zhBody)
+        && new RegExp('^\\s*' + key + '\\s*:', 'm').test(enBody)
+        && referenced.has(key),
+    );
+  }
+}
 
 /* ---------------- 汇总 ---------------- */
 console.log('');
