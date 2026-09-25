@@ -212,6 +212,43 @@ const deadKeys = [...zhKeys]
 check('没有定义却从不使用的文案键', deadKeys.length === 0, deadKeys.join(', '));
 
 console.log('');
+console.log('[10. 席位注册必须经 ctx.slots.inject]');
+/*
+ * 这条守着一个真实事故（2026-09-25）：裸调 `ctx.slots.register` 在 boot 时抛
+ *
+ *   Error: slot "sidebar.panellist" is not declared
+ *   （a parent entry's children table must declare it）
+ *
+ * 浏览器 bundle 的执行顺序由 combo 决定，本包可能排在"声明这些 slot 的那些包"
+ * 之前。错误从 `ctx.effect` 的回调里抛出 → Cordis 把该 effect 记为失败 →
+ * 整个 entry 被判为未激活 → 用户看到启动失败对话框：
+ *
+ *   web boot: 1 entry did not activate
+ *   dsh-plugin-scheduled-tasks: failed
+ *
+ * 修法是官方 practices.md 的写法：`ctx.slots.inject(ownerKey, () => ctx.slots.register(...))`
+ * —— 把注册推迟到属主声明出现之后，并在它重新出现时重装。
+ */
+{
+  // 注释里也提到了 register，先剥掉注释再数，否则会把文档当成调用。
+  const codeOnly = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const injectCount = (codeOnly.match(/ctx\.slots\.inject\(/g) ?? []).length;
+  const registerCount = (codeOnly.match(/ctx\.slots\.register\(/g) ?? []).length;
+  const contributeCalls = (codeOnly.match(/contribute\(/g) ?? []).length;
+  check('恰好 1 处 ctx.slots.inject（在 contribute 辅助函数里复用）', injectCount === 1, '实际 ' + injectCount);
+  check(
+    'register 只出现在 inject 回调里（没有裸调）',
+    registerCount === 1 && /ctx\.slots\.inject\(ownerKey, \(\) => ctx\.slots\.register\(options, Component\)\)/.test(codeOnly),
+    'register ' + registerCount + ' 次',
+  );
+  check('contribute 被调用 2 次（两个席位一个不落）', contributeCalls === 2, '实际 ' + contributeCalls);
+  check(
+    '两个席位仍然分别指向 sidebar.panellist 与 main',
+    /contribute\('sidebar\.panellist',/.test(codeOnly) && /contribute\('main',/.test(codeOnly),
+  );
+}
+
+console.log('');
 if (failures.length > 0) {
   console.log('失败 ' + failures.length + ' 项：');
   for (const item of failures) console.log('  - ' + item);

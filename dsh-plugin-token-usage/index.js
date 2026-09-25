@@ -11,7 +11,7 @@
 import { Config } from './lib/config.js';
 import { createStore } from './lib/store.js';
 import { tokenByModelUnit } from './lib/projection.js';
-import { buildSummary, probeSessionQuery } from './lib/summary.js';
+import { buildSummary, probeSessionSource } from './lib/summary.js';
 import { CONFIG_NS, DEFAULT_SCAN_LIMIT, SUMMARY_TTL_MS } from './lib/constants.js';
 
 export { Config };
@@ -104,7 +104,7 @@ export function apply(ctx, rawConfig) {
   /** 扫描一次并把结果落盘。并发保护：扫描是重活，不能叠加。 */
   async function runScan(reason) {
     if (scanning) return false;
-    const probe = probeSessionQuery(ctx);
+    const probe = probeSessionSource(ctx);
     if (!probe.available) {
       // 失败也要落盘：否则界面只会显示"没有数据"，用户无从判断是没用量还是插件坏了。
       await store.setLastSweep({ ok: false, detail: probe.reason });
@@ -114,7 +114,7 @@ export function apply(ctx, rawConfig) {
     scanning = true;
     try {
       const limit = Number.isFinite(store.getScanLimit()) ? store.getScanLimit() : scanLimit;
-      const summary = await buildSummary(probe.query, { limit });
+      const summary = await buildSummary(probe, { limit });
       const wrote = await store.setSummary(summary);
       await store.setLastSweep({
         ok: wrote === true,

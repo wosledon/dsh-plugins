@@ -953,6 +953,38 @@ for (const field of ['summary', 'refreshRequestedAt', 'lastSweep']) {
 }
 check('顶层有 scanLimit 且默认 200', /scanLimit:\s*Schema\.number\(\)\.default\(200\)/.test(configCode));
 
+/*
+ * summary 的每个字段都必须在 Config 里声明。
+ *
+ * 真机教训：`buildSummary()` 返回 `skipped`，但 `summarySchema` 当初没声明它。
+ * schemastery 对未声明字段要么剥离要么拒绝——两者都坏：前者让界面丢字段，
+ * 后者让整次落盘失败。这个错配一直没暴露，因为真机上只写过 lastSweep、
+ * 从没成功写过 summary。
+ */
+{
+  // 不能用 blockAfter：对象字面量嵌在 `Schema.object({ … })` 的括号里，
+  // 而 blockAfter 只接受 `parens <= 0` 处的 `{`，会跳过它。
+  const grab = (name) => {
+    const m = new RegExp('const ' + name + " = Schema\\.object\\(\\{([\\s\\S]*?)\\n\\}\\);").exec(configCode);
+    return m === null ? null : m[1];
+  };
+  const summarySchemaBlock = grab('summarySchema');
+  const bucketSchemaBlock = grab('bucketSchema');
+  const returnedFields = ['rows', 'scanned', 'total', 'truncated', 'skipped', 'builtAt', 'source'];
+  const undeclared = returnedFields.filter(
+    (field) => summarySchemaBlock === null || !new RegExp('\\b' + field + '\\s*:').test(summarySchemaBlock),
+  );
+  check('summarySchema 声明了 buildSummary 返回的全部字段', undeclared.length === 0, '缺: ' + undeclared.join(', '));
+  check(
+    '每行的 buckets 四个桶都在 bucketSchema 里（否则落盘时会丢）',
+    bucketSchemaBlock !== null
+      && ['uncachedInputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens'].every(
+        (key) => new RegExp('\\b' + key + '\\s*:').test(bucketSchemaBlock),
+      ),
+    bucketSchemaBlock === null ? '没找到 bucketSchema' : bucketSchemaBlock.trim().slice(0, 60),
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* 9. 扫描的诚实性契约                                                   */
 /* ------------------------------------------------------------------ */
@@ -964,7 +996,7 @@ const summarySource = readText(summaryFile);
 const summaryCode = stripComments(summarySource ?? '');
 check('lib/summary.js 可读', summarySource !== null, summaryFile);
 
-const buildBlock = blockAfter(summaryCode, 'export async function buildSummary(query, options = {})');
+const buildBlock = blockAfter(summaryCode, 'export async function buildSummary(probe, options = {})');
 check('静态解析出 buildSummary 函数体', buildBlock !== null);
 for (const field of ['rows', 'scanned', 'total', 'truncated', 'skipped', 'builtAt']) {
   check('buildSummary 返回含 ' + field, hasField(buildBlock, field));
@@ -975,26 +1007,67 @@ check(
 );
 check('有 scanLimit 截断（slice(0, limit)）', /ordered\.slice\(0, limit\)/.test(summaryCode));
 check('truncated = ordered.length > window.length（如实报告被截断）', /truncated:\s*ordered\.length > window\.length/.test(summaryCode));
-check('readSession 被 try/catch 包住（单个坏日志不毁整次扫描）', /try \{[\s\S]{0,240}?await query\.readSession\(/.test(summaryCode));
-check('读失败只 skipped += 1（不 throw）', /catch \{[\s\S]{0,200}?skipped \+= 1;/.test(summaryCode) && !/\bthrow\b/.test(buildBlock ?? ''));
+// 注意：`buildSummary` 在**来源不可用**时确实会 throw（那是守卫，不是失败）。
+// 这里要断言的是「单个会话读失败不许毁掉整次扫描」，所以只看那个 catch 块。
+{
+  const readCatch = /catch \{([\s\S]{0,200}?)\}/.exec(summaryCode);
+  check(
+    '单个会话读失败的 catch 里只 skipped += 1、不重新抛出',
+    /skipped \+= 1/.test(summaryCode) && readCatch !== null && !/throw/.test(readCatch[1]),
+    readCatch === null ? '没找到 catch 块' : readCatch[1].trim().slice(0, 60),
+  );
+}
 check(
-  'probeSessionQuery 对缺失服务返回 { available: false, reason }',
+  'probeSessionSource 对缺失来源返回 { available: false, reason }',
   /return \{ available: false, reason:/.test(summaryCode),
 );
+
+/*
+ * 双来源契约（真机教训）。
+ *
+ * 实测 `ctx.get('sessionQuery')` 在本 profile 返回 undefined —— 它是需要一个
+ * 后端实现的抽象，没有后端时不存在。而 `ctx.sessionPersistence` 是真实挂载的。
+ * 只认其中一个的写法会让跨会话页面在那个 profile 上永远空着，且不报错。
+ */
+check('定义了来源适配表 ADAPTERS', /export const ADAPTERS = \{/.test(summaryCode));
+check('适配表含 query 与 persistence 两个来源', /\bquery:\s*\{/.test(summaryCode) && /\bpersistence:\s*\{/.test(summaryCode));
+{
+  // marker 不能带结尾的 `{`：blockAfter 找的是 marker 之后的第一个 `{`，
+  // 否则它会把内层 `query: {` 当成对象体，只看到一半。
+  const adaptersBlock = blockAfter(summaryCode, 'export const ADAPTERS =');
+  const hasCount = (adaptersBlock?.match(/has\(source\)/g) ?? []).length;
+  check('每个来源自带能力探测 has(source)', hasCount === 2, '实际 ' + hasCount);
+}
+check('persistence 用 list() 枚举', /await source\.list\(\)/.test(summaryCode));
+check('persistence 用 open(id, \'read\') 打开', /await source\.open\(id, 'read'\)/.test(summaryCode));
+check('persistence 读取后必须 close 归还句柄（否则反复扫描会攒句柄）', /finally \{[\s\S]{0,200}?handle\.close\(\)/.test(summaryCode));
+check('query 用 listSessions()/readSession()', /await source\.listSessions\(\)/.test(summaryCode) && /await source\.readSession\(id\)/.test(summaryCode));
+check('probeSessionSource 逐个试来源并返回先可用的那个', /for \(const \[kind, adapter\] of Object\.entries\(ADAPTERS\)\)/.test(summaryCode));
+check('都不行时 reason 列出试过哪些来源（便于诊断）', /试过 \$\{tried\.join/.test(summaryCode));
+check('summary 带 source 字段（记录实际用了哪个来源）', /source:\s*adapter\.label/.test(summaryCode));
 
 // —— 真调用：summary.js 零依赖，行为可以直接验 ——
 const summary = await import(pathToFileURL(summaryFile).href);
 
-check('probeSessionQuery 对空 ctx 返回 unavailable', summary.probeSessionQuery({}).available === false);
-check('probeSessionQuery 的 reason 是非空字符串', typeof summary.probeSessionQuery({}).reason === 'string' && summary.probeSessionQuery({}).reason.length > 0);
+check('probeSessionSource 对空 ctx 返回 unavailable', summary.probeSessionSource({}).available === false);
+check('probeSessionSource 的 reason 是非空字符串', typeof summary.probeSessionSource({}).reason === 'string' && summary.probeSessionSource({}).reason.length > 0);
 check(
-  'probeSessionQuery 对缺方法的服务返回 unavailable',
-  summary.probeSessionQuery({ get: () => ({ listSessions() {} }) }).available === false,
+  'probeSessionSource 对缺方法的服务不误认（只有 list、没有 open）',
+  summary.probeSessionSource({ get: () => ({ sessionPersistence: { list() {} } }) }).available === false,
 );
 const realQuery = { listSessions() {}, readSession() {} };
-check('probeSessionQuery 对完整服务返回 available 并带出 query', (() => {
-  const probe = summary.probeSessionQuery({ get: () => realQuery });
-  return probe.available === true && probe.query === realQuery;
+const realPersistence = { list() {}, open() {} };
+check('probeSessionSource 只有 query 时用它', (() => {
+  const probe = summary.probeSessionSource({ get: (name) => (name === 'sessionQuery' ? realQuery : undefined) });
+  return probe.available === true && probe.kind === 'query' && probe.source === realQuery;
+})());
+check('probeSessionSource 只有 persistence 时用它（真机就是这个情形）', (() => {
+  const probe = summary.probeSessionSource({ get: (name) => (name === 'sessionPersistence' ? realPersistence : undefined) });
+  return probe.available === true && probe.kind === 'persistence' && probe.source === realPersistence;
+})());
+check('probeSessionSource 两个都在时优先 query', (() => {
+  const probe = summary.probeSessionSource({ get: (name) => (name === 'sessionQuery' ? realQuery : realPersistence) });
+  return probe.available === true && probe.kind === 'query';
 })());
 
 const sessionList = [
@@ -1003,24 +1076,24 @@ const sessionList = [
   { header: { id: 'mid', createdAt: 200 } },
 ];
 const readOrder = [];
+const eventsFor = (id) => [{
+  type: 'assistant/message',
+  data: {
+    message: { role: 'assistant', source: { kind: 'model', provider: 'p', model: id } },
+    usage: { inputTokens: 10, outputTokens: 5 },
+  },
+}];
 const queryStub = {
   listSessions: async () => sessionList,
   readSession: async (id) => {
     readOrder.push(id);
     if (id === 'mid') throw new Error('坏日志');
-    return {
-      events: [{
-        type: 'assistant/message',
-        data: {
-          message: { role: 'assistant', source: { kind: 'model', provider: 'p', model: id } },
-          usage: { inputTokens: 10, outputTokens: 5 },
-        },
-      }],
-    };
+    return { events: eventsFor(id) };
   },
 };
+const queryProbe = { available: true, kind: 'query', label: 'sessionQuery', source: queryStub };
 
-const limited = await summary.buildSummary(queryStub, { limit: 2 });
+const limited = await summary.buildSummary(queryProbe, { limit: 2 });
 check('按新→旧取窗口（先读最新两个）', readOrder.join(',') === 'new,mid', readOrder.join(','));
 check('scanned = 窗口内会话数', limited.scanned === 2, fmt(limited.scanned));
 check('total = 全部候选会话数', limited.total === 3, fmt(limited.total));
@@ -1028,11 +1101,54 @@ check('truncated = true（被 scanLimit 截断时如实报告）', limited.trunc
 check('坏日志只让 skipped +1，扫描继续', limited.skipped === 1, fmt(limited.skipped));
 check('好会话照样折叠出用量', limited.rows.length === 1 && limited.rows[0].key === 'p/new' && limited.rows[0].total === 15, fmt(limited.rows));
 check('builtAt 是数字时间戳', Number.isFinite(limited.builtAt), fmt(limited.builtAt));
+check('summary.source 记录了实际来源', limited.source === 'sessionQuery', fmt(limited.source));
 
-const full = await summary.buildSummary(queryStub, { limit: 10 });
+const full = await summary.buildSummary(queryProbe, { limit: 10 });
 check('未截断时 truncated = false', full.truncated === false, fmt(full.truncated));
 check('未截断时 scanned = total = 3', full.scanned === 3 && full.total === 3, fmt([full.scanned, full.total]));
-check('limit 非法时回落到默认值（不返回空表）', (await summary.buildSummary(queryStub, { limit: -1 })).scanned === 3);
+check('limit 非法时回落到默认值（不返回空表）', (await summary.buildSummary(queryProbe, { limit: -1 })).scanned === 3);
+
+// —— persistence 通道必须产出与 query 通道相同的汇总 ——
+{
+  const persistenceOrder = [];
+  const closed = [];
+  let handlesOpened = 0;
+  const persistenceStub = {
+    list: async () => sessionList,
+    open: async (id) => {
+      persistenceOrder.push(id);
+      // `mid` 的 open 本身抛错 —— 它根本没产出句柄，所以没有句柄需要归还。
+      if (id === 'mid') throw new Error('坏日志');
+      handlesOpened += 1;
+      return {
+        read: async () => ({ events: eventsFor(id) }),
+        close: async () => { closed.push(id); },
+      };
+    },
+  };
+  const persistenceProbe = { available: true, kind: 'persistence', label: 'sessionPersistence', source: persistenceStub };
+  const viaPersistence = await summary.buildSummary(persistenceProbe, { limit: 10 });
+  // 允许范围内：new 与 old 成功（各自一行），mid 失败被跳过。
+  check('persistence 通道折叠出与 query 通道相同的行数与 key',
+    viaPersistence.rows.length === full.rows.length
+      && viaPersistence.rows.map((row) => row.key).join(',') === full.rows.map((row) => row.key).join(','),
+    fmt([viaPersistence.rows.map((r) => r.key), full.rows.map((r) => r.key)]));
+  check('persistence 通道 total 与 query 通道一致', viaPersistence.total === full.total, fmt([viaPersistence.total, full.total]));
+  check('persistence 通道也按新→旧扫描', persistenceOrder.join(',') === 'new,mid,old', persistenceOrder.join(','));
+  check('persistence 通道坏日志同样只 skipped +1', viaPersistence.skipped === 1, fmt(viaPersistence.skipped));
+  check('persistence 通道 source 记的是 sessionPersistence', viaPersistence.source === 'sessionPersistence', fmt(viaPersistence.source));
+  check('每个成功打开的句柄都被 close 归还（一个不漏）', closed.length === handlesOpened && handlesOpened === 2, closed.length + '/' + handlesOpened);
+  check('open 直接失败时没有句柄可归还，不误记 close', !closed.includes('mid'), fmt(closed));
+}
+
+check('probe 不可用时 buildSummary 抛错而不是返回空表', await (async () => {
+  try {
+    await summary.buildSummary({ available: false, reason: 'nope' }, {});
+    return false;
+  } catch (error) {
+    return String(error.message).includes('nope');
+  }
+})());
 
 /* ------------------------------------------------------------------ */
 /* 10. 文案键只在客户端                                                  */

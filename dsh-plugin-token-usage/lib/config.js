@@ -39,6 +39,16 @@ const summarySchema = Schema.object({
   scanned: Schema.number().default(0),
   total: Schema.number().default(0),
   truncated: Schema.boolean().default(false),
+  /**
+   * 日志读取失败而被跳过的会话数。
+   *
+   * 必须在这里声明：`buildSummary()` 会返回它，而 schemastery 对未声明的字段
+   * 要么剥离要么拒绝——两者都坏（前者让界面丢字段，后者让整次落盘失败）。
+   * 这个字段在真机上一直没被验证过，因为只写过 lastSweep、没写过 summary。
+   */
+  skipped: Schema.number().default(0),
+  /** 实际用了哪个数据源（`sessionQuery` 或 `sessionPersistence`）；诊断用。 */
+  source: Schema.string(),
   builtAt: Schema.number(),
 });
 

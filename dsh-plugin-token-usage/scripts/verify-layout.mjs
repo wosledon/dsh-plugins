@@ -530,7 +530,7 @@ check(
   /name:\s*'conversation\.session\.header\.utilities'/.test(source),
 );
 
-const utilReg = /tryRegister\('sessionUtilities',\s*\{([\s\S]*?)\}\s*,\s*Meter\)/.exec(source);
+const utilReg = /contribute\('conversation\.session\.header\.utilities',\s*\{([\s\S]*?)\}\s*,\s*Meter\)/.exec(source);
 check('能定位会话头部席位的注册选项', utilReg !== null);
 const utilOptions = utilReg === null ? '' : utilReg[1];
 check(
@@ -548,11 +548,40 @@ check(
   utilOptions.trim(),
 );
 check('会话头部席位声明 locale 命名空间（宿主据此取文案）', /locale:\s*LOCALE_NS/.test(utilOptions));
+
+/*
+ * 席位必须经 `ctx.slots.inject(ownerKey, …)` 注册，**不能**裸调 ctx.slots.register。
+ *
+ * 真机事故（2026-09-25 启动失败对话框）：
+ *   [token-usage] slot panellist failed  Error: slot "sidebar.panellist" is not declared
+ * 浏览器 bundle 的执行顺序由 combo 决定，本包可能排在"声明这些 slot 的包"之前；
+ * 裸注册此时直接抛错，三个席位全部丢失，而 apply 本身不报错。
+ * inject 会把注册推迟到属主声明出现之后，并在它重新出现时重装。
+ */
 check(
-  '三个席位各自 tryRegister（任一失败不拖垮另外两个）',
-  (source.match(/tryRegister\(/g) ?? []).length === 3
-    && /const tryRegister = \(label, options, Component\)/.test(source)
-    && /typeof ctx\.slots\?\.register !== 'function'/.test(source),
+  '三个席位都经 ctx.slots.inject(ownerKey, …) 注册（裸 register 会在 boot 顺序不利时抛错）',
+  /const contribute = \(ownerKey, options, Component\)/.test(source)
+    && /ctx\.slots\.inject\(ownerKey, \(\) => ctx\.slots\.register\(options, Component\)\)/.test(source),
+);
+{
+  // 注释里也提到了 register，所以先剥掉注释再数——否则会把文档当成调用。
+  const codeOnly = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const injectCount = (codeOnly.match(/ctx\.slots\.inject\(/g) ?? []).length;
+  const registerCount = (codeOnly.match(/ctx\.slots\.register\(/g) ?? []).length;
+  const contributeCalls = (codeOnly.match(/contribute\(/g) ?? []).length;
+  // 只有一处 inject（在 contribute 辅助函数里），被 3 个席位调用 —— 这样
+  // "每个席位都走 inject" 由构造保证，不可能漏掉其中一个。
+  check('恰好 1 处 ctx.slots.inject（在 contribute 辅助函数里复用）', injectCount === 1, '实际 ' + injectCount);
+  check(
+    'register 只出现在 inject 回调里（没有裸调）',
+    registerCount === 1 && /ctx\.slots\.inject\(ownerKey, \(\) => ctx\.slots\.register\(options, Component\)\)/.test(codeOnly),
+    'register ' + registerCount + ' 次',
+  );
+  check('contribute 被调用 3 次（三个席位一个不落）', contributeCalls === 3, '实际 ' + contributeCalls);
+}
+check(
+  '席位注册不再用 try/catch 吞错（吞掉只会让席位静默消失，boot 审计仍会记该 entry 失败）',
+  !/slot '\s*\+ label \+ '\s*failed/.test(source),
 );
 
 /* ---------------- 汇总 ---------------- */

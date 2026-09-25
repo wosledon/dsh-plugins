@@ -2032,15 +2032,38 @@ window.__ModuleLoader__.load({
 
       // 两个席位都是 root scope、注册形状固定：main 不接 session props，页面依赖的
       // 一切都在 apply 作用域里闭包拿到，所以注册选项里不放 inject。
+      //
+      // 必须走 `ctx.slots.inject(ownerKey, …)`，**不能**裸调 `ctx.slots.register`。
+      //
+      // 真实事故（2026-09-25）：裸注册在 boot 时抛
+      //   Error: slot "sidebar.panellist" is not declared
+      //   （a parent entry's children table must declare it）
+      // 因为浏览器 bundle 的执行顺序由 combo 决定，本包可能排在"声明这些 slot 的
+      // 那些包"之前。错误从 ctx.effect 的回调里抛出，Cordis 把该 effect 记为失败，
+      // 于是整个 entry 被判为未激活 —— 用户看到的就是启动失败对话框：
+      //   web boot: 1 entry did not activate
+      //   dsh-plugin-scheduled-tasks: failed
+      // 官方 practices.md 的写法正是 inject：
+      //   Contribute through slots: `ctx.slots.inject(ownerKey, () => ctx.slots.register(...))`.
+      //   The callback's registrations are disposed when the owning declaration
+      //   collapses and reinstalled when it returns.
       use(() => {
-        const offPanel = ctx.slots.register(
-          { name: 'sidebar.panellist', id: PANEL_ID, order: 20, label: () => t('panelLabel') },
-          views.PanelIcon,
-        );
-        const offMain = ctx.slots.register({ name: 'main', key: PANEL_ID }, views.TasksPage);
+        const offs = [];
+        const contribute = (ownerKey, options, Component) => {
+          if (typeof ctx.slots?.inject !== 'function' || typeof ctx.slots?.register !== 'function') return;
+          const off = ctx.slots.inject(ownerKey, () => ctx.slots.register(options, Component));
+          if (typeof off === 'function') offs.push(off);
+        };
+        contribute('sidebar.panellist', { name: 'sidebar.panellist', id: PANEL_ID, order: 20, label: () => t('panelLabel') }, views.PanelIcon);
+        contribute('main', { name: 'main', key: PANEL_ID }, views.TasksPage);
         return () => {
-          if (typeof offPanel === 'function') offPanel();
-          if (typeof offMain === 'function') offMain();
+          for (const off of offs) {
+            try {
+              off();
+            } catch {
+              /* ignore */
+            }
+          }
         };
       }, 'scheduled-tasks: slots');
 

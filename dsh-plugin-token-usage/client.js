@@ -610,21 +610,37 @@ window.__ModuleLoader__.load({
       const Page = (props) => UsagePage({ ...props, api, t });
       const Meter = (props) => SessionMeter({ ...props, t });
 
-      // 三个席位分别注册：任何一个失败都不能拖垮另外两个。
+      /*
+       * 三个席位必须通过 `ctx.slots.inject(ownerKey, …)` 注册，**不能**裸调
+       * `ctx.slots.register`。
+       *
+       * 真实事故：裸注册在 boot 时会抛
+       *   Error: slot "sidebar.panellist" is not declared
+       *   （a parent entry's children table must declare it）
+       * 因为浏览器 bundle 的执行顺序由 combo 决定，本包可能排在"声明这些 slot 的
+       * 那些包"之前。此时 slot 尚未声明，注册直接失败——三个席位全部丢失，
+       * 而 apply 本身不报错，界面只是"少了东西"。
+       *
+       * 官方 practices.md 就是这条：
+       *   Contribute through slots: `ctx.slots.inject(ownerKey, () => ctx.slots.register(...))`.
+       *   The callback's registrations are disposed when the owning declaration
+       *   collapses and reinstalled when it returns.
+       * `inject` 会把注册推迟到属主声明出现之后，并在它重新出现时重装。
+       *
+       * 注意：这里**不要**再用 try/catch 吞错。吞掉只会把"注册失败"变成
+       * "界面少了一块"，而 boot 审计仍会把该 entry 记为失败；让错误照实暴露
+       * 比静默降级好排查。
+       */
       use(() => {
         const offs = [];
-        const tryRegister = (label, options, Component) => {
-          if (typeof ctx.slots?.register !== 'function') return;
-          try {
-            const off = ctx.slots.register(options, Component);
-            if (typeof off === 'function') offs.push(off);
-          } catch (error) {
-            console.error('[token-usage] slot ' + label + ' failed', error);
-          }
+        const contribute = (ownerKey, options, Component) => {
+          if (typeof ctx.slots?.inject !== 'function' || typeof ctx.slots?.register !== 'function') return;
+          const off = ctx.slots.inject(ownerKey, () => ctx.slots.register(options, Component));
+          if (typeof off === 'function') offs.push(off);
         };
-        tryRegister('panellist', { name: 'sidebar.panellist', id: PANEL_ID, order: 30, label: () => t('panelLabel') }, PanelIcon);
-        tryRegister('main', { name: 'main', key: PANEL_ID }, Page);
-        tryRegister('sessionUtilities', {
+        contribute('sidebar.panellist', { name: 'sidebar.panellist', id: PANEL_ID, order: 30, label: () => t('panelLabel') }, PanelIcon);
+        contribute('main', { name: 'main', key: PANEL_ID }, Page);
+        contribute('conversation.session.header.utilities', {
           name: 'conversation.session.header.utilities',
           id: PANEL_ID,
           order: 40,
