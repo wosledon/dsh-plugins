@@ -186,17 +186,28 @@ window.__ModuleLoader__.load({
       /* 轨道高度固定，条形按占比填满；min-width 保证极小段也看得见 */
       '.stu-chartTrack{display:flex;width:100%;height:14px;border-radius:3px;overflow:hidden;background:var(--dsw-alias-bg-layer-2)}',
       '.stu-seg{height:100%;min-width:2px}',
+      /*
+       * 四桶用**四个实色令牌**，不再用"同一个品牌色的不同透明度"。
+       *
+       * 真机反馈：图表看着是"黑灰、不好看"。根因是 `opacity:.46` / `.24` 叠在
+       * 暗色主题的深背景上，几乎等于深灰——最需要看清的"缓存读"（常年占九成）
+       * 恰好落在最低的那一档。
+       *
+       * 主题里没有分类色板，所以借 state-* 当分类色。语义名与"桶"没有对应关系，
+       * 但**分类数据本来就不靠颜色名表意**，而且有图例与数值兜底；相比之下
+       * "看不见"是纯粹的缺陷。四个都是实色，明暗两套主题下都成立。
+       */
       '.stu-seg[data-bucket="uncachedInputTokens"]{background:var(--dsw-alias-brand-primary)}',
-      '.stu-seg[data-bucket="outputTokens"]{background:var(--dsw-alias-brand-primary);opacity:.74}',
-      '.stu-seg[data-bucket="cacheReadTokens"]{background:var(--dsw-alias-brand-primary);opacity:.46}',
-      '.stu-seg[data-bucket="cacheWriteTokens"]{background:var(--dsw-alias-brand-primary);opacity:.24}',
+      '.stu-seg[data-bucket="outputTokens"]{background:var(--dsw-alias-state-success-primary)}',
+      '.stu-seg[data-bucket="cacheReadTokens"]{background:var(--dsw-alias-state-idle-primary)}',
+      '.stu-seg[data-bucket="cacheWriteTokens"]{background:var(--dsw-alias-state-warn-primary)}',
       '.stu-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}',
       '.stu-legendItem{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}',
       '.stu-swatch{width:9px;height:9px;border-radius:2px;flex:none}',
       '.stu-swatch[data-bucket="uncachedInputTokens"]{background:var(--dsw-alias-brand-primary)}',
-      '.stu-swatch[data-bucket="outputTokens"]{background:var(--dsw-alias-brand-primary);opacity:.74}',
-      '.stu-swatch[data-bucket="cacheReadTokens"]{background:var(--dsw-alias-brand-primary);opacity:.46}',
-      '.stu-swatch[data-bucket="cacheWriteTokens"]{background:var(--dsw-alias-brand-primary);opacity:.24}',
+      '.stu-swatch[data-bucket="outputTokens"]{background:var(--dsw-alias-state-success-primary)}',
+      '.stu-swatch[data-bucket="cacheReadTokens"]{background:var(--dsw-alias-state-idle-primary)}',
+      '.stu-swatch[data-bucket="cacheWriteTokens"]{background:var(--dsw-alias-state-warn-primary)}',
       '.stu-legendValue{color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}',
       /* ---- 图表：环形图（按模型占比） ------------------------------ */
       /*
@@ -214,9 +225,21 @@ window.__ModuleLoader__.load({
       '.stu-donutWrap{position:relative;width:132px;height:132px}',
       '.stu-donutSvg{display:block;width:100%;height:100%}',
       '.stu-donutTrack{stroke:var(--dsw-alias-bg-layer-2)}',
-      /* 段色 = 品牌色按模型次序降透明度，和四桶那套同一思路：没有分类色板可用，
-         硬借 state-* 会把某个模型染成"错误色"。颜色只负责分组，读数看图例。 */
+      /*
+       * 段色按模型次序取四个**实色令牌**，与四桶共用同一套分类色。
+       *
+       * 原先是"品牌色按次序降透明度"，真机反馈是"黑灰、不好看"——低透明度叠在
+       * 暗色背景上就等于深灰。颜色只负责分组，读数看图例与数值，所以借 state-*
+       * 当分类色的语义代价可以接受，"看不见"则不可接受。
+       */
       '.stu-donutSeg{stroke:var(--dsw-alias-brand-primary)}',
+      '.stu-donutSeg[data-series="1"]{stroke:var(--dsw-alias-state-success-primary)}',
+      '.stu-donutSeg[data-series="2"]{stroke:var(--dsw-alias-state-idle-primary)}',
+      '.stu-donutSeg[data-series="3"]{stroke:var(--dsw-alias-state-warn-primary)}',
+      '.stu-donutSwatch[data-series="0"]{background:var(--dsw-alias-brand-primary)}',
+      '.stu-donutSwatch[data-series="1"]{background:var(--dsw-alias-state-success-primary)}',
+      '.stu-donutSwatch[data-series="2"]{background:var(--dsw-alias-state-idle-primary)}',
+      '.stu-donutSwatch[data-series="3"]{background:var(--dsw-alias-state-warn-primary)}',
       /* 圆环中心的总量：absolute 定位，避免再叠一层 SVG 文本节点（跨浏览器基线不稳）。 */
       '.stu-donutCenter{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;pointer-events:none}',
       '.stu-donutTotal{font-size:15px;font-weight:600;line-height:20px;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}',
@@ -367,13 +390,14 @@ window.__ModuleLoader__.load({
     ];
 
     /**
-     * 环形图段色按**模型次序**取的四档透明度，超过 4 个模型从头循环。
+     * 环形图与四桶共用的**分类色档数**（4 档：brand / success / idle / warn）。
      *
-     * 和四桶那套同一思路（同品牌色降透明度）：主题令牌里没有分类色板，硬借
-     * `state-*` 会把某个模型染成"警告色/错误色"。透明度循环的代价是第 5 个模型
-     * 和第 1 个同色——所以图例里必须直接写模型名和数值，颜色只负责分组。
+     * 原先这里是四档**透明度**，真机反馈"黑灰、不好看"——`opacity:.24` 叠在暗色
+     * 背景上等于深灰。主题没有分类色板，所以借 state-* 当分类色；颜色只负责分组，
+     * 图例与数值负责读数，所以语义名的代价可以接受。第 5 个模型与第 1 个同色，
+     * 这也是图例必须直接写名字与数值的原因。
      */
-    const SEGMENT_OPACITY = [1, 0.74, 0.46, 0.24];
+    const SEGMENT_SERIES = 4;
 
     /**
      * 横向堆叠条形图：每个模型一条，四段 = 四个桶。
@@ -555,9 +579,9 @@ window.__ModuleLoader__.load({
         if (value <= 0) continue;
         const ratio = value / total;
         const length = ratio * 100;
-        // 段色按**模型次序**降透明度（超过 4 个循环）。用段自己的 value 当索引会
-        // 让两个等量模型拿到同一个颜色，图例分不出来。
-        const opacity = SEGMENT_OPACITY[index % SEGMENT_OPACITY.length];
+        // 段色取**模型次序**（超过 4 个循环）。用段自己的 value 当索引会让两个
+        // 等量模型拿到同一个颜色，图例就分不出来了。
+        const series = index % SEGMENT_SERIES;
         out.push({
           key: typeof row.key === 'string' ? row.key : String(index),
           row,
@@ -566,7 +590,7 @@ window.__ModuleLoader__.load({
           ratio,
           length,
           offset,
-          opacity,
+          series,
         });
         offset += length;
       }
@@ -620,7 +644,8 @@ window.__ModuleLoader__.load({
             cx: centre, cy: centre, r: radius,
             fill: 'none',
             strokeWidth: 6,
-            strokeOpacity: segment.opacity,
+            // 段色由 CSS 的 [data-series] 决定（四个实色令牌），不再用透明度。
+            'data-series': String(segment.series),
             strokeDasharray: segment.length + ' 100',
             strokeDashoffset: -segment.offset,
           })));
@@ -632,7 +657,7 @@ window.__ModuleLoader__.load({
         const row = segment.row ?? {};
         const share = Math.round(segment.ratio * 100);
         return h('li', { className: 'stu-donutItem', key: segment.key },
-          h('i', { className: 'stu-donutSwatch', style: { opacity: segment.opacity } }),
+          h('i', { className: 'stu-donutSwatch', 'data-series': String(segment.series) }),
           h('span', { className: 'stu-donutName', title: row.model + ' · ' + row.provider },
             row.model === 'unknown' ? t('unattributed') : row.model),
           h('span', { className: 'stu-donutShare' }, share + '%'),

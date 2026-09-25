@@ -1,9 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" role="img" aria-label="Token usage">
-  <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M4 20V10" />
-    <path d="M10 20V4" />
-    <path d="M16 20v-7" />
-    <path d="M22 20V8" />
-    <path d="M2 20h20" />
+  <!--
+    图标是**美术资源**，可以用字面颜色（官方规则：主题令牌用于界面，字面色仅用于美术）。
+    配色对齐官方图标集：基座与前三根柱品牌蓝 #4D6BFE，最高一根用绿 #22C55E 点出"峰值"。
+    与 reasoning-effort 的图标同构（都是柱状），靠配色与朝向区分：这个带基座、柱子高低交错。
+  -->
+  <g fill="none" stroke-linecap="round" stroke-width="2.6">
+    <path d="M4 19.5V13" stroke="#4D6BFE" />
+    <path d="M10 19.5V6" stroke="#22C55E" />
+    <path d="M16 19.5V11" stroke="#4D6BFE" />
+    <path d="M21 19.5V15.5" stroke="#4D6BFE" />
   </g>
+  <path d="M2.5 21.4h19" stroke="#4D6BFE" stroke-linecap="round" stroke-width="2" opacity=".45" />
 </svg>

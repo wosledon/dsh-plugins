@@ -564,16 +564,32 @@ check(
   '条形有 role=img 与 aria-label（无障碍，不只是一堆 div）',
   /role:\s*'img'/.test(source) && /'aria-label':\s*label/.test(source),
 );
+/*
+ * 四桶配色：**四个实色令牌**。
+ *
+ * 这两条断言原先守的是"同一个品牌色的四档透明度"。真机反馈是图表"黑灰、
+ * 不好看"——低透明度叠在暗色主题的深背景上就等于深灰，而最需要看清的"缓存读"
+ * （常年占九成）恰好落在最低那档。方案被推翻，断言也跟着改成守新方案。
+ *
+ * 主题没有分类色板，所以借 state-* 当分类色：分类数据不靠颜色名表意，且有图例
+ * 与数值兜底；"看不见"则是纯粹的缺陷。
+ */
 check(
-  '四段只用品牌色的不同透明度，未硬借 state-* 语义色',
-  // 6 处 = .stu-seg 与 .stu-swatch 各三档透明度，加上不打 opacity 的第一档。
-  /data-bucket="uncachedInputTokens"\]\{background:var\(--dsw-alias-brand-primary\)\}/.test(cssBlock)
-    && (cssBlock.match(/--dsw-alias-brand-primary\);opacity:/g) ?? []).length === 6,
-  '实际 ' + (cssBlock.match(/--dsw-alias-brand-primary\);opacity:/g) ?? []).length,
+  '四桶用四个不同的实色令牌（不再是同色的透明度梯度）',
+  /\.stu-seg\[data-bucket="uncachedInputTokens"\]\{background:var\(--dsw-alias-brand-primary\)\}/.test(cssBlock)
+    && /\.stu-seg\[data-bucket="outputTokens"\]\{background:var\(--dsw-alias-state-success-primary\)\}/.test(cssBlock)
+    && /\.stu-seg\[data-bucket="cacheReadTokens"\]\{background:var\(--dsw-alias-state-idle-primary\)\}/.test(cssBlock)
+    && /\.stu-seg\[data-bucket="cacheWriteTokens"\]\{background:var\(--dsw-alias-state-warn-primary\)\}/.test(cssBlock),
 );
 check(
-  '四段透明度依次递减（保证相邻段可分辨）',
-  /opacity:\.74/.test(cssBlock) && /opacity:\.46/.test(cssBlock) && /opacity:\.24/.test(cssBlock),
+  '四桶与图例色块同色（色块与实际条形必须一致，否则图例撒谎）',
+  /\.stu-swatch\[data-bucket="outputTokens"\]\{background:var\(--dsw-alias-state-success-primary\)\}/.test(cssBlock)
+    && /\.stu-swatch\[data-bucket="cacheReadTokens"\]\{background:var\(--dsw-alias-state-idle-primary\)\}/.test(cssBlock)
+    && /\.stu-swatch\[data-bucket="cacheWriteTokens"\]\{background:var\(--dsw-alias-state-warn-primary\)\}/.test(cssBlock),
+);
+check(
+  '四桶不再用透明度拉开层次（暗色主题下会退化成看不见的深灰）',
+  !/\.stu-(seg|swatch)\[data-bucket="[^"]+"\]\{[^}]*opacity:/.test(cssBlock),
 );
 
 /*
@@ -599,9 +615,17 @@ check(
   /transform:\s*'rotate\(-90 ' \+ centre/.test(source),
 );
 check(
-  '环形图段色按模型次序取透明度（不是按数值），超过 4 个循环',
-  /const opacity = SEGMENT_OPACITY\[index % SEGMENT_OPACITY\.length\]/.test(source)
-    && /const SEGMENT_OPACITY = \[1, 0\.74, 0\.46, 0\.24\]/.test(source),
+  '环形图段色按模型次序取分类色（不是按数值），超过 4 个循环',
+  /const series = index % SEGMENT_SERIES/.test(source)
+    && /const SEGMENT_SERIES = 4/.test(source),
+);
+check(
+  '环形图段色由 CSS 的 data-series 决定（四个实色令牌），不用内联透明度',
+  /'data-series':\s*String\(segment\.series\)/.test(source)
+    && !/strokeOpacity:\s*segment\.opacity/.test(source)
+    && /\.stu-donutSeg\[data-series="1"\]\{stroke:var\(--dsw-alias-state-success-primary\)\}/.test(cssBlock)
+    && /\.stu-donutSeg\[data-series="2"\]\{stroke:var\(--dsw-alias-state-idle-primary\)\}/.test(cssBlock)
+    && /\.stu-donutSeg\[data-series="3"\]\{stroke:var\(--dsw-alias-state-warn-primary\)\}/.test(cssBlock),
 );
 check(
   '环形图圆心显示总量（formatTokens），不是空白',
@@ -962,12 +986,12 @@ if (donutSegmentsFn !== null) {
     segments.map((segment) => segment.offset).join(','),
   );
   check(
-    '环形图段色按模型次序取透明度，超过 4 个循环（两个等量模型不会同色）',
+    '环形图段色按模型次序取分类色，超过 4 个循环（两个等量模型不会同色）',
     donutSegmentsFn([{ key: 'a', total: 1 }, { key: 'b', total: 1 }], 2)
-      .map((segment) => segment.opacity).join(',') === '1,0.74'
+      .map((segment) => segment.series).join(',') === '0,1'
       && donutSegmentsFn(
         Array.from({ length: 5 }, (unusedValue, index) => ({ key: String(index), total: 1 })), 5,
-      ).map((segment) => segment.opacity).join(',') === '1,0.74,0.46,0.24,1',
+      ).map((segment) => segment.series).join(',') === '0,1,2,3,0',
   );
 
   check('单个模型 100% 时画一段整圈（length === 100）',
