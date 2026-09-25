@@ -165,13 +165,27 @@ const SHADOW_EXCEPTION = /^box-shadow\s*:\s*[\s\S]*rgba\(0,\s*0,\s*0,\s*\.16\)$/
  */
 const CHART_PALETTE = ['#4D6BFE', '#22C55E', '#8B5CF6', '#F5A524'];
 /*
- * 热力图（`[data-level="1..4"]`）也进白名单，理由与四桶/圆环不同但同样可验证：
- * 它表达的是**序数**（深浅 = 多少），所以四档必须同一个色相、只差不透明度。
- * 白名单是按**色值**比对的，因此那四条写成 `#4D6BFE38 / 73 / B8 / 空` 这种八位
- * 十六进制（alpha 后缀），色值仍落在 `#4D6BFE` 上；写成 `rgba(77,107,254,.22)`
- * 反而无法与调色板比对，只能放宽规则——那正是这套断言要避免的。
+ * 热力图（空格子与四档）也进白名单。
+ *
+ * 它表达的是**序数**（深浅 = 多少），所以四档是**同一个色相的四档实色**。
+ * 真机反馈"看不清"纠正了一版做法：原先是"同一个色的四档**不透明度**"，
+ * 而透明色的最终观感取决于叠在什么底色上——最低档几乎隐形，它偏偏代表
+ * "有少量用量"，最不该被忽略；空格子用 `bg-layer-2` 更是与卡片底色几乎同色。
+ *
+ * 现在每档给 `light-dark(浅色值, 深色值)` **一对实色**，靠宿主设在根元素上的
+ * `color-scheme` 自动选边。所以这里的白名单是**两张表**：系列色，以及热力图
+ * 那 10 个实色值（空格 1 对 + 四档 4 对）。仍然是收成白名单而不是放宽规则——
+ * 出现白名单之外的颜色照样会红。
  */
-const CHART_COLOR_RULE = /^\.stu-(seg|swatch)\[data-bucket="[^"]+"\]$|^\.stu-donutSeg(\[data-series="\d"\])?$|^\.stu-donutSwatch\[data-series="\d"\]$|^\.stu-heatCell\[data-level="[1-4]"\]$/;
+const HEAT_PALETTE = [
+  '#E3E6EC', '#2C313C', // level 0：空格子必须是看得见的实色块
+  '#BAC7FF', '#2C3870', // level 1
+  '#8CA0FF', '#4055AE', // level 2
+  '#5B7BFF', '#6C8CFF', // level 3
+  '#2743D8', '#A9BCFF', // level 4
+];
+const ALLOWED_COLORS = CHART_PALETTE.concat(HEAT_PALETTE);
+const CHART_COLOR_RULE = /^\.stu-(seg|swatch)\[data-bucket="[^"]+"\]$|^\.stu-donutSeg(\[data-series="\d"\])?$|^\.stu-donutSwatch\[data-series="\d"\]$|^\.stu-heatCell(\[data-level="[1-4]"\])?$/;
 const chartPaletteUse = [];
 /**
  * 取一条声明的**基础色相**：`#4D6BFE` / `#4D6BFE38` / `rgba(77,107,254,.22)` 都归到
@@ -247,28 +261,64 @@ check(
   rawColorDecls.length === 0,
   rawColorDecls.join(', '),
 );
+/*
+ * 系列色（四桶 / 圆环）与热力图分开校验：前者是**分类**色板，后者是**序数**色阶，
+ * 约束不同。混在一起校验会让两边都变松。
+ */
+const seriesUse = chartPaletteUse.filter((entry) => !entry.startsWith('.stu-heatCell'));
 check(
-  '图表色板只用白名单里的四个**色相**（alpha 后缀允许，第五个色相不允许）',
-  chartPaletteUse.length >= 12
-    && chartPaletteUse.every((entry) => CHART_PALETTE.includes(entry.slice(entry.lastIndexOf(' = ') + 3))),
-  chartPaletteUse.join(' | '),
+  '系列色只用白名单里的四个色相（alpha 后缀允许，第五个色相不允许）',
+  seriesUse.length >= 12
+    && seriesUse.every((entry) => CHART_PALETTE.includes(entry.slice(entry.lastIndexOf(' = ') + 3))),
+  seriesUse.join(' | '),
 );
 check(
   '图表四桶与环形四段用的是**同一套**色板（两边不一致会让人读错归属）',
   ['#4D6BFE', '#22C55E', '#8B5CF6', '#F5A524'].every((color) =>
-    chartPaletteUse.filter((entry) => entry.endsWith(' = ' + color)).length >= 2),
-  chartPaletteUse.join(' | '),
+    seriesUse.filter((entry) => entry.endsWith(' = ' + color)).length >= 2),
+  seriesUse.join(' | '),
+);
+/*
+ * 热力图：空格子 + 四档都是 `light-dark(浅, 深)` **成对的实色**。
+ *
+ * 这三条替代了原来的"四档是同一色相的四个不透明度"。真机连续两轮"看不清"
+ * 证明了那个做法结构上就不成立：透明度的最终观感取决于叠在什么底色上。
+ * 现在能静态验证的性质是：
+ *   - 每档两侧取值**不同**（写成同一个值等于只适配了一半主题）；
+ *   - 五组（空格 + 四档）**互不相同**（否则档位读不出差别）；
+ *   - 全部落在白名单内，出现第五个色相或任意新色值照样红。
+ */
+const heatUse = chartPaletteUse.filter((entry) => entry.startsWith('.stu-heatCell'));
+/*
+ * 直接从 cssBlock 取 `light-dark(浅, 深)` 的两侧，**不走 `chartPaletteUse`**。
+ *
+ * 原因：本文件的 CSS 解析器按 `[,;]` 切分声明，而 `light-dark(a,b)` 自带逗号，
+ * 于是它只会留下 `a`（实测 `chartPaletteUse` 里那条是 `.stu-heatCell = #E3E6EC`）。
+ * 靠它做配对校验会永远得到 0 组，然后只能把断言写松——那等于丢掉这条防线。
+ * 这里改成对原始 CSS 文本做正则，语义清楚且不受解析器影响。
+ */
+const heatPairs = [...cssBlock.matchAll(
+  /\.stu-heatCell(?:\[data-level="[1-4]"\])?\{[^}]*?light-dark\(([^,]+),([^)]+)\)/g,
+)].map((m) => [m[1].trim(), m[2].trim()]);
+check(
+  '热力图共 5 组（空格 + 四档）都用 light-dark() 成对实色',
+  heatPairs.length === 5,
+  '实际 ' + heatPairs.length + ' 组：' + heatUse.join(' | '),
 );
 check(
-  '热力图四档只用 #4D6BFE 一个色相（四档同色相才读得出"深浅=多少"）',
-  chartPaletteUse.filter((entry) => /^\.stu-heatCell\[data-level="[1-4]"\] = /.test(entry))
-    .every((entry) => entry.endsWith(' = #4D6BFE')),
-  chartPaletteUse.filter((entry) => entry.startsWith('.stu-heatCell')).join(' | '),
+  '每组 light-dark() 两侧取值不同（写同一个值等于只适配了一半主题）',
+  heatPairs.every(([light, dark]) => light !== dark),
+  heatPairs.map(([l, d]) => l + '/' + d).join(' | '),
+);
+check(
+  '空格子与四档、以及四档之间**互不相同**（否则档位读不出差别）',
+  new Set(heatPairs.map(([light, dark]) => light + dark)).size === heatPairs.length,
+  heatPairs.map(([l, d]) => l + '/' + d).join(' | '),
 );
 check(
   '除上述白名单外没有其它裸颜色值',
   [...rawColorValues].every((value) =>
-    /^rgba\(0,\s*0,\s*0,\s*\.16\)$/.test(value) || CHART_PALETTE.includes(basePaletteColor(value))),
+    /^rgba\(0,\s*0,\s*0,\s*\.16\)$/.test(value) || ALLOWED_COLORS.includes(basePaletteColor(value))),
   [...rawColorValues].join(', '),
 );
 check('颜色属性一律使用 var(--dsw-alias-*)', nonTokenColor.length === 0, nonTokenColor.join(', '));
@@ -840,18 +890,19 @@ check(
   /\.stu-heatScroll\{[^}]*overflow-x:auto/.test(cssBlock),
 );
 check(
-  'level 0 用底色令牌（"没有用量"是底色，不是第五档强度）',
-  /\.stu-heatCell\{[^}]*background:var\(--dsw-alias-bg-layer-2\)/.test(cssBlock),
+  'level 0 不再用底色令牌 background（bg-layer-2 与卡片底色同色，等于没画）',
+  !/\.stu-heatCell\{[^}]*background:var\(--dsw-alias-bg-layer-[12]\)/.test(cssBlock),
 );
-/*
- * 空格子必须**看得见**。
- *
- * 真机缺陷：level 0 只填 `bg-layer-2`，而它与卡片自身的 `bg-layer-1` 几乎同色，
- * 于是零用量的格子整个隐形——14 格的范围里只看得见有数据的那 2 格，用户读成
- * "网格没画出来"。底色令牌给不出对比度，所以必须另有一圈描边把格子边界画出来。
- */
 check(
-  '空格子有内描边（只靠 bg-layer-2 会与卡片底色同色而隐形）',
+  'level 0 有 light-dark() 成对实色（空格子本身就是一块看得见的方块）',
+  /\.stu-heatCell\{[^}]*background:light-dark\(/.test(cssBlock),
+);
+check(
+  'light-dark() 之前有兜底声明（不支持时退回中性令牌，而不是变成没有背景色）',
+  /\.stu-heatCell\{[^}]*background:var\(--dsw-alias-border-l1\);background:light-dark\(/.test(cssBlock),
+);
+check(
+  '空格子仍有内描边（让格子边界更利落；角色从"唯一可见来源"降为"加固"）',
   /\.stu-heatCell\{[^}]*box-shadow:inset 0 0 0 \.5px var\(--dsw-alias-border-l1\)/.test(cssBlock),
   'inset 而不是 border：不占布局，11px 格子与 14px 列轨道才不会脱钩',
 );
@@ -863,13 +914,11 @@ check(
  * 只出现一个色值"，顺带钉住四档齐全。
  */
 check(
-  '强度四档是同一色相的四个不透明度（不是四个色相的四路分类色）',
-  ['.stu-heatCell[data-level="1"]{background:#4D6BFE38}',
-    '.stu-heatCell[data-level="2"]{background:#4D6BFE73}',
-    '.stu-heatCell[data-level="3"]{background:#4D6BFEB8}',
-    '.stu-heatCell[data-level="4"]{background:#4D6BFE}'].every((rule) => cssBlock.includes(rule))
-    && new Set((cssBlock.match(/\.stu-heatCell\[data-level="[1-4]"\]\{background:(#[0-9A-Fa-f]+)\}/g) ?? [])
-      .map((rule) => /(#[0-9A-Fa-f]{6})/.exec(rule)[1])).size === 1,
+  '强度四档各有 light-dark() 成对实色，且每档都带兜底声明',
+  [1, 2, 3, 4].every((level) => new RegExp(
+    '\\.stu-heatCell\\[data-level="' + level + '"\\]\\{background:var\\(--dsw-alias-brand-primary\\);background:light-dark\\(',
+  ).test(cssBlock)),
+  '兜底是必须的：不支持 light-dark() 时整条声明失效，没有兜底就会更糟',
 );
 check(
   '全是 0 时不画网格，只留一句空态文案（7×N 个同色方块说明不了"没有用量"）',
@@ -2437,14 +2486,24 @@ if (renderHeatmapFn !== null && zhBody !== '' && enBody !== '') {
  * 哪天宿主不再设置，本地断言会先红，而不是等到真机上"图标看不见"才发现。
  * 视觉结论仍需真机确认（图标本身是浏览器绘制的，静态分析看不到它）。
  */
+/*
+ * **先剥注释再检查。**
+ *
+ * 这条断言第一版直接对源码做正则，结果被**注释里出现的 `color-scheme` 这个词**
+ * 判红——而那段注释恰恰是在解释"为什么本插件不设 color-scheme"。
+ * 与 `#310` 那次是同一个坑：**常红的规则最后一定被忽略，比没有规则更糟。**
+ */
+const sourceNoComments = source
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*\/\/.*$/gm, '');
 check(
   '本插件不自己设 color-scheme（写死 dark/light 会在另一种主题下反过来出错，也与宿主抢同一份设置）',
-  !/color-scheme|colorScheme/.test(source),
-  'client.js 里出现了 color-scheme',
+  !/color-scheme|colorScheme/.test(sourceNoComments),
+  'client.js 里出现了 color-scheme（注释不算）',
 );
 check(
   '不覆盖原生日历图标的对比度、也不自绘图标：图标跟随宿主设的 color-scheme（证据见本节注释）',
-  !/calendar-picker-indicator|showPicker/.test(source),
+  !/calendar-picker-indicator|showPicker/.test(sourceNoComments),
 );
 
 /** 读已发布应用包里的内部路径；读不到返回 null（调用方据此"跳过并说明"，不静默变绿）。 */

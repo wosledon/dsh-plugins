@@ -372,33 +372,48 @@ window.__ModuleLoader__.load({
        * `.stu-heatCell` 两处，必须同步：只改一处会让列轨道与格子宽度脱钩，
        * 格子被拉伸成矩形，而图照画不误。
        */
-      '.stu-heatCell{width:11px;height:11px;border-radius:2px;background:var(--dsw-alias-bg-layer-2);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l1)}',
       /*
-       * level 0 = "这一天没有用量"，用底色令牌 + **一圈极细的内描边**。
+       * 空格子（level 0）必须是**一块看得见的实色方块**。
        *
-       * 描边不是装饰，是修一个真机缺陷：只填 `bg-layer-2` 时它与卡片自身的
-       * `bg-layer-1` 几乎同色，于是**零用量的格子整个隐形**——真机截图里 14 格
-       * 的范围只看得见有数据的那 2 格，看起来像"网格没画出来"。
-       * 内描边（inset，不占布局）保证无论底色多接近，格子边界始终存在。
+       * 真机连续两轮反馈"看不清"，根因都在这条：
        *
-       * 1..4 档刻意用同一个色相的**不透明度**而不是四个色相：这里表达的是
-       * "深浅 = 多少"的**序数**关系，用分类色（四个色相）会让读者以为四档是四种
-       * 互相独立的类别，读不出大小。四个声明里只出现一个色值，白名单见
-       * verify-layout.mjs 的 CHART_COLOR_RULE。
+       *   1. 最初只填 `bg-layer-2` —— 它与卡片自身的 `bg-layer-1` 几乎同色，
+       *      零用量的格子**整个隐形**，14 格的范围里只看得见有数据的 2 格。
+       *   2. 加了一圈 0.5px 内描边后，边界有了，但**方块本身仍然看不见**——
+       *      用户的原话是"github 在没有的时候，那个方块也很清晰"。
        *
-       * 写 `#4D6BFE38` 这种八位十六进制而不是 `rgba(77,107,254,.22)`：
-       * 白名单是**按色值**比对的，rgba 形式无法与 CHART_PALETTE 里的四个值对齐，
-       * 只能再放宽一条规则；而"收紧成白名单"正是这套断言的价值所在。
+       * GitHub 的观感来自：**它把空格子也当成一个正常渲染的格子，只是颜色最浅**，
+       * 而不是"尽量不画"。所以填充色本身必须与卡片背景拉开可辨差异。
+       *
+       * 用 `light-dark()`：宿主已在根元素设了 `color-scheme`（见
+       * `dsh-client-ui-theme` 的首屏注入与 `dsh-client-ui-layout` 的 ThemePresenter），
+       * 所以它能自动跟随主题给出**实色**，对比度可控——这正是"叠透明度"做不到的：
+       * 透明色的最终观感取决于叠在什么底色上。
+       *
+       * **前一条声明是兜底**：若运行时不支持 `light-dark()`，该声明被丢弃，
+       * 落回 `--dsw-alias-border-l1`（两套主题下都是可见的中性色），
+       * 而不是变成"没有背景色"这种更糟的结果。
        */
+      '.stu-heatCell{width:11px;height:11px;border-radius:2px;background:var(--dsw-alias-border-l1);background:light-dark(#E3E6EC,#2C313C);box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l1)}',
       /*
-       * hover 与键盘聚焦共用同一圈描边：格子现在带 tabIndex，
+       * 1..4 档：同一个色相的**四档实色**（不是一个色的四档透明度）。
+       *
+       * "深浅 = 多少"是**序数**关系，所以同色相；用四个色相会让读者以为四档是四种
+       * 互相独立的类别。但深浅必须用**实色**表达：透明度会随底色改变观感，
+       * 最低档因此几乎隐形——而它偏偏代表"有少量用量"，最不该被忽略。
+       *
+       * 方向与 GitHub 一致：浅色主题下越高越**深**，深色主题下越高越**亮**。
+       * 每档同样带兜底声明。
+       */
+      '.stu-heatCell[data-level="1"]{background:var(--dsw-alias-brand-primary);background:light-dark(#BAC7FF,#2C3870)}',
+      '.stu-heatCell[data-level="2"]{background:var(--dsw-alias-brand-primary);background:light-dark(#8CA0FF,#4055AE)}',
+      '.stu-heatCell[data-level="3"]{background:var(--dsw-alias-brand-primary);background:light-dark(#5B7BFF,#6C8CFF)}',
+      '.stu-heatCell[data-level="4"]{background:var(--dsw-alias-brand-primary);background:light-dark(#2743D8,#A9BCFF)}',
+      /*
+       * hover 与键盘聚焦共用同一圈描边：格子带 tabIndex，
        * 聚焦时看不见焦点就等于"键盘用户没有 tooltip"。
        */
       '.stu-heatCell:hover,.stu-heatCell:focus-visible{outline:1px solid var(--dsw-alias-brand-primary);outline-offset:0}',
-      '.stu-heatCell[data-level="1"]{background:#4D6BFE38}',
-      '.stu-heatCell[data-level="2"]{background:#4D6BFE73}',
-      '.stu-heatCell[data-level="3"]{background:#4D6BFEB8}',
-      '.stu-heatCell[data-level="4"]{background:#4D6BFE}',
       /* 图例：左边"少"，右边"多"，中间五档色块按深浅排开。 */
       '.stu-heatLegend{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:10px;line-height:14px;color:var(--dsw-alias-label-secondary)}',
       '.stu-heatLegendScale{display:inline-flex;align-items:center;gap:4px}',
