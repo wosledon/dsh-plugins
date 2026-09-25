@@ -80,6 +80,29 @@ const lastSweepSchema = Schema.object({
   detail: Schema.string(),
 });
 
+/**
+ * 宿主半的自述心跳。
+ *
+ * 存在的理由是一次真实的排查困境：`apply()` 当时**没有任何可观测出口**——
+ * 数据没落盘时，无法区分"apply 没被调用"、"apply 抛错了"、"定时器没跑"、
+ * 还是"扫描还没结束"。只能靠外部进程 CPU 采样与姊妹插件对照去猜。
+ *
+ * 这两条记录让下一次重启直接给出答案：
+ *   - `lastBoot`：apply 是否进入、是否抛错、抛了什么；
+ *   - `heartbeat`：定时器是否在转（tick 计数 + 最后一次时间）。
+ */
+const lastBootSchema = Schema.object({
+  at: Schema.number(),
+  /** 'enter' = apply 已进入；'ready' = 装配完成；'failed' = 抛错。 */
+  phase: Schema.string(),
+  detail: Schema.string(),
+});
+
+const heartbeatSchema = Schema.object({
+  ticks: Schema.number().default(0),
+  lastTickAt: Schema.number(),
+});
+
 export const Config = Schema.object({
   /**
    * 一次刷新最多扫描多少个会话（按最新优先）。
@@ -92,5 +115,7 @@ export const Config = Schema.object({
     /** 客户端写入的刷新请求时间戳；宿主取走后清空。 */
     refreshRequestedAt: Schema.number(),
     lastSweep: lastSweepSchema,
+    lastBoot: lastBootSchema,
+    heartbeat: heartbeatSchema,
   }).volatile(),
 });

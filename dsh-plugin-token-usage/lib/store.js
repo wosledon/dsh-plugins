@@ -261,6 +261,24 @@ export function createStore(ctx, rawConfig, identity) {
       return persist();
     },
     /**
+     * 宿主半的启动自述。
+     *
+     * `apply()` 原先没有任何可观测出口——没数据时无法区分"没被调用 / 抛错了 /
+     * 定时器没跑 / 扫描没结束"。这条记录让下一次启动直接给出答案。
+     */
+    async setLastBoot(record) {
+      internal = { ...internal, lastBoot: { at: Date.now(), phase: String(record?.phase ?? ''), detail: String(record?.detail ?? '') } };
+      return persist();
+    },
+    /**
+     * 定时器心跳。证明"宿主半确实活着且在转"，与 `lastSweep`（证明"扫描跑过"）
+     * 是两件事：定时器可能在转而扫描一直失败，也可能两者都没跑。
+     */
+    async setHeartbeat(ticks, lastTickAt) {
+      internal = { ...internal, heartbeat: { ticks, lastTickAt } };
+      return persist();
+    },
+    /**
      * 消费刷新请求：**先清空再返回**上一个值。
      * 反过来会让"清理失败"变成"每轮重复扫描"，空转比重扫一次更糟。
      */

@@ -63,6 +63,19 @@ export function apply(ctx, rawConfig) {
   const store = createStore(ctx, rawConfig, { ns: CONFIG_NS, packageName: 'dsh-plugin-token-usage' });
   const cleanups = [];
 
+  /*
+   * 启动自述：**第一步就写**，在任何可能抛错的东西之前。
+   *
+   * 排查真机"数据没来"时，`apply()` 原先一个可观测出口都没有，于是无法区分
+   * 「apply 没被调用」「apply 抛错了」「定时器没跑」「扫描还没结束」——只能靠
+   * 外部 CPU 采样和姊妹插件对照去猜。这条一写，下次启动就直说。
+   * fire-and-forget：它本身失败也不能拖住装配。
+   */
+  void store.setLastBoot({ phase: 'enter' }).catch(() => {});
+
+  /* 定时器心跳计数（见下方 setInterval）。 */
+  let tickCount = 0;
+
   /* ------------------------------------------------------------------ */
   /* 1. 会话投影：按模型的实时用量                                        */
   /* ------------------------------------------------------------------ */
@@ -191,6 +204,10 @@ export function apply(ctx, rawConfig) {
   // 放进 effect 后由 fiber 直接拥有，不依赖后续代码是否执行到。
   ctx.effect(() => {
     const timer = setInterval(() => {
+      tickCount += 1;
+      // 心跳写的是"定时器在转"，与 lastSweep 的"扫描跑过"是两件事：
+      // 定时器可能在转而扫描一直失败，也可能两者都没跑。
+      void store.setHeartbeat(tickCount, Date.now()).catch(() => {});
       void sweep();
     }, SWEEP_MS);
     // 不阻止进程退出：定时器只是后台补充，不是常驻理由。
@@ -204,8 +221,11 @@ export function apply(ctx, rawConfig) {
     void (async () => {
       try {
         await store.refresh();
+        await store.setLastBoot({ phase: 'ready' }).catch(() => {});
         await sweep();
       } catch (error) {
+        // 失败必须留痕：否则界面只是"没数据"，而原因全在宿主里没人看得见。
+        await store.setLastBoot({ phase: 'failed', detail: message(error) }).catch(() => {});
         warn(ctx, `启动流程失败：${message(error)}`);
       }
     })();
