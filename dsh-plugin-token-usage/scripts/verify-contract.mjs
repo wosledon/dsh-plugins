@@ -1038,10 +1038,30 @@ check('适配表含 query 与 persistence 两个来源', /\bquery:\s*\{/.test(su
   const hasCount = (adaptersBlock?.match(/has\(source\)/g) ?? []).length;
   check('每个来源自带能力探测 has(source)', hasCount === 2, '实际 ' + hasCount);
 }
-check('persistence 用 list() 枚举', /await source\.list\(\)/.test(summaryCode));
-check('persistence 用 open(id, \'read\') 打开', /await source\.open\(id, 'read'\)/.test(summaryCode));
-check('persistence 读取后必须 close 归还句柄（否则反复扫描会攒句柄）', /finally \{[\s\S]{0,200}?handle\.close\(\)/.test(summaryCode));
-check('query 用 listSessions()/readSession()', /await source\.listSessions\(\)/.test(summaryCode) && /await source\.readSession\(id\)/.test(summaryCode));
+/*
+ * 这些断言原先匹配的是裸 await（`await source.list()`）。现在每次调用都包了
+ * `withTimeout(...)`，所以模式跟着改——**语义没变**（仍然调同一个 API），
+ * 变的是"它有界"。顺带新增一条：**每个来源调用都必须过 withTimeout**，
+ * 因为无界的 await 会永久卡住 runScan 的 scanning 闩锁，之后所有扫描静默停摆。
+ */
+check('persistence 用 list() 枚举', /withTimeout\(source\.list\(\),/.test(summaryCode));
+check('persistence 用 open(id, \'read\') 打开', /withTimeout\(source\.open\(id, 'read'\),/.test(summaryCode));
+check('persistence 读取后必须 close 归还句柄（否则反复扫描会攒句柄）', /finally \{[\s\S]{0,260}?handle\.close\(\)/.test(summaryCode));
+check('query 用 listSessions()/readSession()', /withTimeout\(source\.listSessions\(\),/.test(summaryCode) && /withTimeout\(source\.readSession\(id\),/.test(summaryCode));
+check(
+  '每一个来源调用都有超时（无界的 await 会永久卡住扫描闩锁，之后所有扫描静默停摆）',
+  [
+    /withTimeout\(source\.list\(\),/,
+    /withTimeout\(source\.open\(id, 'read'\),/,
+    /withTimeout\(handle\.read\(\),/,
+    /withTimeout\(source\.listSessions\(\),/,
+    /withTimeout\(source\.readSession\(id\),/,
+  ].every((pattern) => pattern.test(summaryCode))
+    // 裸 await 一个来源方法 = 遗漏了超时。
+    && !/await source\.(list|open|listSessions|readSession)\(/.test(summaryCode)
+    && !/await handle\.read\(\)/.test(summaryCode),
+);
+check('close 也加了超时（一个卡住的 close 同样能拖死整轮扫描）', /withTimeout\(handle\.close\(\),/.test(summaryCode));
 check('probeSessionSource 逐个试来源并返回先可用的那个', /for \(const \[kind, adapter\] of Object\.entries\(ADAPTERS\)\)/.test(summaryCode));
 check('都不行时 reason 列出试过哪些来源（便于诊断）', /试过 \$\{tried\.join/.test(summaryCode));
 check('summary 带 source 字段（记录实际用了哪个来源）', /source:\s*adapter\.label/.test(summaryCode));

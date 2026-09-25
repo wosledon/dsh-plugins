@@ -35,6 +35,36 @@ import { SUMMARY_SHAPE } from './constants.js';
 export const TIMELINE_MAX_DAYS = 90;
 
 /**
+ * 单次会话读取的超时上限。
+ *
+ * **为什么必须有**：`runScan` 在调用这些 await 之前把 `scanning` 置为 `true`，
+ * 而那是个闩锁——`finally` 里的复位只在 await 正常返回或抛错时执行。一旦
+ * `open()` / `read()` 永不 resolve，闩锁就永久卡住，之后**每一轮** `sweep()`
+ * 都会在 `if (scanning) return false` 处直接返回。
+ *
+ * 真机后果：一次挂起 = 跨会话汇总永久停止更新，而界面上只是"折线图没了"，
+ * 没有任何报错。所以每一次读取都要有界。
+ */
+export const READ_TIMEOUT_MS = 20_000;
+
+/**
+ * 给一个 Promise 加超时。超时抛错（而不是返回空），让调用方按"这个会话读失败"
+ * 处理——`buildSummary` 会把它计入 `skipped` 并继续下一个会话。
+ */
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} 超时（${ms}ms）`));
+    }, ms);
+    if (typeof timer?.unref === 'function') timer.unref();
+    Promise.resolve(promise).then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
+/**
  * 各来源的适配：把两种 API 形状归一成 `listHeaders` / `readEvents`。
  * `has(source)` 同时充当能力探测——只有方法齐备才认。
  */
@@ -45,7 +75,7 @@ export const ADAPTERS = {
       return typeof source?.listSessions === 'function' && typeof source?.readSession === 'function';
     },
     async listHeaders(source) {
-      const records = await source.listSessions();
+      const records = await withTimeout(source.listSessions(), READ_TIMEOUT_MS, 'listSessions');
       return Array.isArray(records)
         ? records
           .filter((record) => record?.header?.id !== undefined)
@@ -53,7 +83,7 @@ export const ADAPTERS = {
         : [];
     },
     async readEvents(source, id) {
-      const snapshot = await source.readSession(id);
+      const snapshot = await withTimeout(source.readSession(id), READ_TIMEOUT_MS, 'readSession');
       return Array.isArray(snapshot?.events) ? snapshot.events : [];
     },
   },
@@ -63,7 +93,7 @@ export const ADAPTERS = {
       return typeof source?.list === 'function' && typeof source?.open === 'function';
     },
     async listHeaders(source) {
-      const snapshots = await source.list();
+      const snapshots = await withTimeout(source.list(), READ_TIMEOUT_MS, 'list');
       return Array.isArray(snapshots)
         ? snapshots
           .filter((snapshot) => snapshot?.header?.id !== undefined)
@@ -71,13 +101,20 @@ export const ADAPTERS = {
         : [];
     },
     async readEvents(source, id) {
-      const handle = await source.open(id, 'read');
+      const handle = await withTimeout(source.open(id, 'read'), READ_TIMEOUT_MS, 'open');
       try {
-        const result = await handle.read();
+        const result = await withTimeout(handle.read(), READ_TIMEOUT_MS, 'read');
         return Array.isArray(result?.events) ? result.events : [];
       } finally {
         // read 句柄不持有所有权，但必须归还——否则反复扫描会长久攒下句柄。
-        if (typeof handle?.close === 'function') await handle.close();
+        // 归还也加超时：一个卡住的 close 同样能拖死整轮扫描。
+        if (typeof handle?.close === 'function') {
+          try {
+            await withTimeout(handle.close(), READ_TIMEOUT_MS, 'close');
+          } catch {
+            /* 归还失败不该让"已经读到的事件"作废 */
+          }
+        }
       }
     },
   },

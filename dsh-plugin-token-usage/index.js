@@ -126,6 +126,14 @@ export function apply(ctx, rawConfig) {
     }
     scanning = true;
     try {
+      /*
+       * 先落一条"扫描已开始"，再去做重活。
+       *
+       * 真机排查时卡在这个盲点上：扫描从启动起跑了 3 分钟没有任何写入，而
+       * `lastSweep` 一直是上一次成功的时间戳——于是"正在扫描"和"根本没跑"
+       * 从外面看一模一样。有了这条，卡住的扫描自己会说话。
+       */
+      await store.setLastSweep({ ok: false, detail: '扫描中…' });
       const limit = Number.isFinite(store.getScanLimit()) ? store.getScanLimit() : scanLimit;
       const summary = await buildSummary(probe, { limit });
       const wrote = await store.setSummary(summary);
@@ -207,7 +215,13 @@ export function apply(ctx, rawConfig) {
       tickCount += 1;
       // 心跳写的是"定时器在转"，与 lastSweep 的"扫描跑过"是两件事：
       // 定时器可能在转而扫描一直失败，也可能两者都没跑。
-      void store.setHeartbeat(tickCount, Date.now()).catch(() => {});
+      //
+      // 这里**不能**用 `.catch(() => {})` 吞掉：上一轮真机排查时心跳始终不出现，
+      // 而"写失败"和"回调没触发"从外面看一模一样，白白多花了一轮。
+      // 失败也要留痕（写进 lastSweep.detail，因为心跳本身写不进去时只能借它）。
+      void store.setHeartbeat(tickCount, Date.now()).catch((error) => {
+        warn(ctx, `心跳写入失败：${message(error)}`);
+      });
       void sweep();
     }, SWEEP_MS);
     // 不阻止进程退出：定时器只是后台补充，不是常驻理由。
