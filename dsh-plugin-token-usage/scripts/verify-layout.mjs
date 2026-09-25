@@ -1013,6 +1013,31 @@ if (renderDonutFn !== null && renderTrendFn !== null) {
     findByClass(donutTree, /stu-donutSeg/, []).every((node) => node.type === 'circle'),
   );
   check('环形图有底圈（占比不满 100% 时露出底色）', hasClass(donutTree, /stu-donutTrack/));
+  /*
+   * 图例与弧段必须指向**同一个模型**。
+   *
+   * donutSegments 会跳过 0 值行，所以渲染时若用 `rows[段序号]` 回头取模型名，
+   * 前面跳过一个 0 值行就会让后面所有图例整体错位：A 的名字配上 B 的数值和颜色。
+   * 不报错，只是名字和数字不是同一个模型——肉眼几乎发现不了，所以拿一个
+   * "中间夹着 0 值行"的行集把对齐钉死。
+   */
+  const gappedRows = [
+    { key: 'a', provider: 'p1', model: 'alpha', total: 100 },
+    { key: 'z', provider: 'pz', model: 'zero', total: 0 },
+    { key: 'c', provider: 'p3', model: 'gamma', total: 100 },
+  ];
+  const gappedTree = renderDonutFn(gappedRows, tFor);
+  const gappedNames = findByClass(gappedTree, /stu-donutName/, [])
+    .map((node) => (node.children ?? []).filter((child) => typeof child === 'string').join(''));
+  check(
+    '跳过 0 值行后图例仍与弧段对齐（不是 A 的名字配 B 的值）',
+    gappedNames.join(',') === 'alpha,gamma' && countClass(gappedTree, /stu-donutSeg/) === 2,
+    gappedNames.join(','),
+  );
+  check(
+    '段自带源行与源索引（否则渲染层只能按段序号猜模型）',
+    donutSegmentsFn(gappedRows, 200).every((segment) => segment.row !== undefined && Number.isInteger(segment.index)),
+  );
   check('环形图有图例列表与色块（颜色只负责分组，读数靠图例）',
     hasClass(donutTree, /stu-donutLegend/) && countClass(donutTree, /stu-donutSwatch/) === 3);
   check('单个模型时也画出一整圈（length === 100 的弧）',

@@ -524,6 +524,11 @@ window.__ModuleLoader__.load({
      *
      * 值为 0 / 负 / 非数的行直接不画：给 0 占比的模型留一个零长段，图例里就会多出
      * 一条 "0%"——那是"没有用量"和"有模型没上报"的混淆，宁可少一行。
+     *
+     * 正因为它会**跳过**行，段里必须带上源行（`row`）与源索引：渲染时若回头用
+     * `rows[段序号]` 取模型名，前面跳过一个 0 值行就会让后面所有图例**整体错位**——
+     * 显示的是 A 的名字配上 B 的数值和颜色。这种错位不报错，只是名字和数字不是
+     * 同一个模型，肉眼极难发现（自检里有一条专门钉它）。
      */
     function donutSegments(rows, grandTotal) {
       const list = Array.isArray(rows) ? rows : [];
@@ -532,7 +537,8 @@ window.__ModuleLoader__.load({
       if (total <= 0) return out;
       let offset = 0;
       for (let index = 0; index < list.length; index += 1) {
-        const value = Number.isFinite(list[index]?.total) && list[index].total > 0 ? list[index].total : 0;
+        const row = list[index];
+        const value = Number.isFinite(row?.total) && row.total > 0 ? row.total : 0;
         if (value <= 0) continue;
         const ratio = value / total;
         const length = ratio * 100;
@@ -540,7 +546,9 @@ window.__ModuleLoader__.load({
         // 让两个等量模型拿到同一个颜色，图例分不出来。
         const opacity = SEGMENT_OPACITY[index % SEGMENT_OPACITY.length];
         out.push({
-          key: typeof list[index].key === 'string' ? list[index].key : String(index),
+          key: typeof row.key === 'string' ? row.key : String(index),
+          row,
+          index,
           value,
           ratio,
           length,
@@ -584,7 +592,7 @@ window.__ModuleLoader__.load({
 
       for (let index = 0; index < segments.length; index += 1) {
         const segment = segments[index];
-        const row = rows[index] ?? {};
+        const row = segment.row ?? {};
         const share = Math.round(segment.ratio * 100);
         const label = fill(t('segmentAria'), {
           model: row.model === 'unknown' ? t('unattributed') : row.model,
@@ -605,8 +613,10 @@ window.__ModuleLoader__.load({
           })));
       }
 
-      const legendItems = segments.map((segment, index) => {
-        const row = rows[index] ?? {};
+      // 模型名一律取 `segment.row`（段自带的源行），**不能**用 `rows[index]`：
+      // donutSegments 会跳过 0 值行，按段序号回去索引会让图例整体错位。
+      const legendItems = segments.map((segment) => {
+        const row = segment.row ?? {};
         const share = Math.round(segment.ratio * 100);
         return h('li', { className: 'stu-donutItem', key: segment.key },
           h('i', { className: 'stu-donutSwatch', style: { opacity: segment.opacity } }),
