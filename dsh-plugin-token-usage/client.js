@@ -93,7 +93,12 @@ window.__ModuleLoader__.load({
       trendFrom: '起始日期',
       trendTo: '结束日期',
       trendLast7: '近 7 天',
-      trendLast30: '近 30 天',
+      /*
+       * 键名保留 `trendLast30`：它是 `data-preset="last30"` 这条**行为契约**的名字，
+       * 改键名要连带改断言里的预设列表；而真正错的是文案。天数已改为
+       * `DEFAULT_RANGE_DAYS`（365），所以文案必须是"近一年"。
+       */
+      trendLast30: '近一年',
       trendAll: '全部',
       trendClamped: '已按数据的实际跨度收紧范围。',
       loading: '载入中…',
@@ -152,7 +157,8 @@ window.__ModuleLoader__.load({
       trendFrom: 'Start date',
       trendTo: 'End date',
       trendLast7: 'Last 7 days',
-      trendLast30: 'Last 30 days',
+      /* 见中文表同处的说明：键名是 data-preset 契约，天数已是一年。 */
+      trendLast30: 'Last year',
       trendAll: 'All',
       trendClamped: 'Range tightened to the data actually available.',
       loading: 'Loading…',
@@ -877,11 +883,16 @@ window.__ModuleLoader__.load({
     /**
      * 默认窗口的长度（天，含首尾）。
      *
-     * 30 天是"一个月"的近似。真机上 timeline 常跨半年到一年，53 列的热力图在侧栏里
-     * 得横滚才能看完，而"最近用得怎么样"才是打开页面时想问的第一个问题；
-     * 整段跨度仍然可看——把区间切到「全部」即可。
+     * **365 天 = 一整年**，真机反馈改过来的：30 天在宽卡片里只占左边一小块
+     * （5 列 ≈ 96px），右边留下一大片空白，看起来像没画完。热力图的观感本来
+     * 就来自密度——一年 53 列正好铺满，也是这种图最常见的时间尺度。
+     *
+     * 与 `MAX_RANGE_DAYS = 366` 的关系：365 天是"整年窗口"，366 天是上限
+     * （含闰日），所以默认窗口天然落在上限之内，不会被夹。
+     *
+     * 宿主侧 `TIMELINE_MAX_DAYS` 必须 ≥ 这个值，否则窗口里大半是空列。
      */
-    const DEFAULT_RANGE_DAYS = 30;
+    const DEFAULT_RANGE_DAYS = 365;
 
     /**
      * 三个预设区间：`[data-* 值, 天数, 文案键]`。天数为 0 = 全部（两端不限制）。
@@ -939,9 +950,13 @@ window.__ModuleLoader__.load({
      * 窗口由用户选，但选不出比一年还长的窗口。
      *
      * 366 = 闰年的天数，取它是因为窗口可能整段落在闰年里（`2024-01-01` 起的一年）；
-     * 取 365 会把闰年的整年窗口无故削掉一天。宿主侧 `TIMELINE_MAX_DAYS` 只有 90 天，
-     * 所以这个上界在真实数据下**永远不会**被触发——它是给"手打一个远古日期"兜底的，
-     * 不是给正常数据用的。
+     * 取 365 会把闰年的整年窗口无故削掉一天。
+     *
+     * **这个上界现在是可达的，不再只是兜底**：宿主侧 `TIMELINE_MAX_DAYS` 已随之提到
+     * 366（原先 90），所以"数据跨度超过 366 天"在真机上确实会出现。它与
+     * `DEFAULT_RANGE_DAYS = 365` 的关系由 verify-layout 第 8.f 组钉住——默认窗口经
+     * `clampRange` 后必须 `clamped === false`；将来有人把默认调到 366 以上就会被
+     * 这里**静默夹短**，那条断言正是防这个的。
      */
     const MAX_RANGE_DAYS = 366;
 
