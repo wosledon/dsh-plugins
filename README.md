@@ -16,6 +16,7 @@ host half is ordinary ESM.
 | --- | --- | --- | --- |
 | [`dsh-plugin-reasoning-effort`](dsh-plugin-reasoning-effort/README.md) | Per-model reasoning-effort editor for hand-declared LLM providers, inside Settings → Models | empty (registers nothing) | yes |
 | [`dsh-plugin-scheduled-tasks`](dsh-plugin-scheduled-tasks/README.md) | Runs an LLM task on a schedule (cron / interval / daily / weekly / one-shot), with a management panel, per-task run history and conversational creation | yes (scheduler, runner, tools, skill) | yes |
+| [`dsh-plugin-token-usage`](dsh-plugin-token-usage/README.md) | Provider-reported token usage grouped by model: a live indicator in the session header plus a cross-session table | yes (session projection + bounded log scan) | yes |
 
 ### dsh-plugin-reasoning-effort
 
@@ -45,6 +46,34 @@ skill and tool allowlist, and every run is recorded.
 
 It is **not** the same as the bundled `@deepseek-ai/dsh-schedule`: that one delivers
 reminder text into an existing session and never runs the model.
+
+### dsh-plugin-token-usage
+
+Shows the token usage the provider adapter actually reports, grouped by
+`(provider, model)` — **no estimation and no cost figures**. The four buckets match
+the official `tokenUsage` projection (`uncachedInputTokens`, `outputTokens`,
+`cacheReadTokens`, `cacheWriteTokens`); `reasoningTokens` is deliberately excluded
+because it is usually a subset of `outputTokens`.
+
+Reaching that data takes two different routes, because the two views ask different
+questions:
+
+- **Per-model, in one session** is a session-derived value, and the official
+  guidance is that the client must not fold session events itself. So the host
+  registers a session projection named `tokenByModel` with a `wire.view`, and the
+  browser half just reads `useProjection('tokenByModel')`. It renders as a seat in
+  `conversation.session.header.utilities` — a total with a per-model popover — and
+  renders nothing while the session has no usage.
+- **Across sessions** belongs to no single session, so no projection can hold it,
+  and `ctx.sessionQuery`'s methods are not `@Remote`, so the browser cannot read
+  other sessions' logs at all. The host therefore scans them: newest first, capped
+  by `scanLimit` (200 by default), folded per model and persisted; the standalone
+  page (sidebar panel + main) reads the result back.
+
+It is honest about its bounds: a truncated scan says “scanned the *N* most recent of
+*M* sessions”, unreadable logs are counted rather than silently dropped, and calls
+that cannot be attributed to a model land in an explicit `unknown/unknown`
+“unattributed” row so the totals still add up.
 
 ## Install
 
@@ -89,8 +118,9 @@ example by linking the copy from the DSH installation:
 <plugin>/node_modules/@deepseek-ai/cosmokit
 ```
 
-That directory is a local testing aid and is git-ignored. `dsh-plugin-reasoning-effort`'s
-self-check has no such dependency and runs anywhere.
+That directory is a local testing aid and is git-ignored. Two plugins'
+self-checks have no such dependency and run anywhere: `dsh-plugin-reasoning-effort`
+and `dsh-plugin-token-usage` (its `test-fold.mjs` touches nothing but `node:` builtins).
 
 ## Verification
 
@@ -107,6 +137,11 @@ dsh-plugin-scheduled-tasks
   node scripts/verify-contract.mjs      65 assertions
   node scripts/verify-layout.mjs        54 assertions
   node scripts/verify-render.mjs        57 assertions
+
+dsh-plugin-token-usage
+  node scripts/test-fold.mjs            65 assertions
+  node scripts/verify-layout.mjs        58 assertions
+  node scripts/verify-contract.mjs     230 assertions
 ```
 
 The suites deliberately cover things that ordinary functional tests miss:
@@ -149,18 +184,34 @@ spacing, contrast in light and dark themes. Those need a real page.
     ├── locale/{en,zh}.json
     ├── skills/scheduled-tasks/SKILL.md
     └── scripts/                 the self-check scripts listed above
+└── dsh-plugin-token-usage/
+    ├── index.js                 host half: tokenByModel projection + bounded cross-session scan
+    ├── lib/                     fold (pure), projection, summary, store, config, constants
+    ├── client.js                browser half: header indicator + cross-session page
+    ├── CONTRACT.md              frozen internal contract (data shapes, invariants)
+    ├── cordis.patch.yml
+    ├── package.json
+    ├── locale/{en,zh}.json
+    └── scripts/                 the self-check scripts listed above
 ```
 
 `_scratch/` is used during development and is git-ignored; see `.gitignore` for why.
 
 ## Compatibility
 
-Both plugins were developed and verified against DSH **0.1.7-rc.2**. They use
-documented plugin surfaces (the `settings` service, slots, `agentLoop`, `tools`,
-`skills`), but DSH is pre-release: an internal API can change between versions. Each
-cross-service call is written defensively — a missing optional service degrades the
-feature instead of failing the whole plugin — but a behaviour change upstream can
-still break a feature silently.
+All three plugins were developed and verified against DSH **0.1.7-rc.2**. They use
+documented plugin surfaces (the `settings` and `configEditor` services, session
+projections, slots, `agentLoop`, `tools`, `skills`), but DSH is pre-release: an
+internal API can change between versions. Each cross-service call is written
+defensively — a missing optional service degrades the feature instead of failing the
+whole plugin — but a behaviour change upstream can still break a feature silently.
+
+One such behaviour is worth calling out because it is not obvious from any signature:
+**`ctx.settings.mutate()` addresses an existing entry in the profile patch layer.**
+A row supplied by a bundle's own `cordis.patch.yml` (`insert`) has no entry there, so
+writes through `settings` do not land. `ctx.configEditor.edit(entry, change)` is
+addressed by Loader entry instead, which is why `dsh-plugin-token-usage` prefers it
+and keeps `settings` only as a fallback.
 
 ## License
 

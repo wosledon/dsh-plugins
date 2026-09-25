@@ -1,0 +1,45 @@
+{
+  "meta": {
+    "title": "Token 用量",
+    "description": "按模型展示当前会话与跨会话的 token 消耗，只取提供方上报的真实用量。"
+  },
+  "panel": {
+    "label": "Token 用量"
+  },
+  "unit": {
+    "input": "输入",
+    "output": "输出",
+    "cacheRead": "缓存读",
+    "cacheWrite": "缓存写"
+  },
+  "sessionMeter": {
+    "aria": "Token 用量：{total}。展开明细。",
+    "title": "本次会话",
+    "empty": "本次会话还没有上报用量。",
+    "notReported": "未上报",
+    "attempts": "次调用",
+    "hint": "只统计提供方上报的用量，不做估算。"
+  },
+  "page": {
+    "title": "Token 用量",
+    "subtitle": "提供方上报的 token 消耗，按模型归并。",
+    "tabSession": "本次会话",
+    "tabAll": "所有会话",
+    "refresh": "刷新",
+    "refreshing": "扫描中…",
+    "rows": "模型",
+    "total": "合计",
+    "share": "占比",
+    "empty": "还没有记录任何 token 用量。",
+    "emptySession": "本次会话还没有记录 token 用量。",
+    "emptyAll": "已扫描的会话里还没有记录 token 用量。",
+    "scanNote": "已扫描 {scanned} / {total} 个会话。",
+    "scanTruncated": "只扫描了最近的 {scanned} / {total} 个会话，更早的未计入。",
+    "builtAt": "上次扫描：{time}",
+    "never": "从未",
+    "unsupported": "本 profile 未提供会话投影，因此无法实时显示按模型的用量。",
+    "requested": "已排入刷新请求，宿主下一轮扫描后出现结果。",
+    "attempts": "{count} 次调用",
+    "unknown": "未归属"
+  }
+}

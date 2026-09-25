@@ -1,0 +1,45 @@
+{
+  "meta": {
+    "title": "Token Usage",
+    "description": "Per-model token consumption for the current session and across sessions, from provider-reported usage only."
+  },
+  "panel": {
+    "label": "Token usage"
+  },
+  "unit": {
+    "input": "Input",
+    "output": "Output",
+    "cacheRead": "Cache read",
+    "cacheWrite": "Cache write"
+  },
+  "sessionMeter": {
+    "aria": "Token usage: {total}. Open the breakdown.",
+    "title": "This session",
+    "empty": "No usage reported yet in this session.",
+    "notReported": "Not reported",
+    "attempts": "attempts",
+    "hint": "Provider-reported only — no estimates."
+  },
+  "page": {
+    "title": "Token usage",
+    "subtitle": "Provider-reported token consumption, grouped by model.",
+    "tabSession": "This session",
+    "tabAll": "All sessions",
+    "refresh": "Refresh",
+    "refreshing": "Scanning…",
+    "rows": "Model",
+    "total": "Total",
+    "share": "Share",
+    "empty": "No token usage recorded yet.",
+    "emptySession": "No token usage recorded in this session yet.",
+    "emptyAll": "No token usage recorded in any scanned session yet.",
+    "scanNote": "Scanned {scanned} of {total} sessions.",
+    "scanTruncated": "Scanned the {scanned} most recent of {total} sessions; older ones are not included.",
+    "builtAt": "Last scan: {time}",
+    "never": "never",
+    "unsupported": "This profile does not provide session projections, so live per-model usage is unavailable.",
+    "requested": "A refresh has been queued; results appear on the next Host pass.",
+    "attempts": "{count} attempts",
+    "unknown": "unattributed"
+  }
+}

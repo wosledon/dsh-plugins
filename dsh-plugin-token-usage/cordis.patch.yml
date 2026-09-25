@@ -1,0 +1,11 @@
+# 「Token 用量」bundle 的补丁层。
+#
+# 只插入一行宿主条目。浏览器半不由补丁声明：`dsh-client-modules` 扫描
+# 已启用 Loader 条目的 package.json `dsh.client` 声明，并通过 `exports["./client"]`
+# 取得浏览器 bundle，所以 client.js 会自动进入 window.__DSH_BOOT__。
+#
+# 行 id 在 profile 内必须唯一，同时它也是本插件设置命名空间
+# （客户端用 remote.settings.mutate 写入刷新请求时使用的 ns）。
+- insert:
+    - id: token-usage
+      name: 'dsh-plugin-token-usage'
