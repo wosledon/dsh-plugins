@@ -111,7 +111,7 @@ type View = {
 ### 3.1 为什么只能宿主扫描
 
 跨会话总量不属于任何单个会话，装不进会话投影。而 `ctx.sessionQuery` 的方法
-（`listSessions` / `readSession` …）**都不是 `@Remote`**，浏览器半读不到别的会话日志。
+（`listSessions` / `readSession` …）**都不是 `@Remote`**，浏览器侧读不到别的会话日志。
 
 ### 3.2 通道选择（**易错点，务必按此实现**）
 
@@ -221,14 +221,14 @@ type Summary = {
 
 ---
 
-## §7 跨两半的数据形状契约
+## §7 跨两侧的数据形状契约
 
 数据流是：**宿主折叠 → 写进插件配置的 `internal.summary` → settings 服务投影给客户端 →
-浏览器半 `readSummary()` 取回**。
+浏览器侧 `readSummary()` 取回**。
 
-- **不变式**：宿主写出的 `internal.summary` 形状 = §3.3 的 `Summary`；浏览器半
+- **不变式**：宿主写出的 `internal.summary` 形状 = §3.3 的 `Summary`；浏览器侧
   `readSummary()` 必须能从 `settings.describe()` 的返回里取到它。
-- **不变式**：`internal` 住在 **user 层**（`entry.user.internal`）。浏览器半**两层都要看**
+- **不变式**：`internal` 住在 **user 层**（`entry.user.internal`）。浏览器侧**两层都要看**
   （`user` 优先，回落 `value`）——只读其中一层会在某些 profile 下静默拿到空数据。
 - **不变式**：两端对同一份 `rows` 必须得出**相同的顺序、相同的每行 `total`、相同的桶值**。
   宿主侧由 `rowsOf()` 排序，客户端侧由 `normaliseRows()` 归一；两处漂移在界面上只表现为
@@ -236,9 +236,9 @@ type Summary = {
 - **为什么这条要单独测**：中间任何一处嵌套层级、字段名或大小写不一致，界面都只是
   "没有数据"——这是最难查的一类契约漂移。`verify-contract.mjs` §11 用**宿主真实的 store**
   写一次（编辑器桩捕获它实际提交的完整 raw config），再把那份 config 按
-  `settings.describe()` 的返回形状包起来交给**浏览器半真实的** `readSummary` /
+  `settings.describe()` 的返回形状包起来交给**浏览器侧真实的** `readSummary` /
   `normaliseRows` 去读，逐值比对两端结果；并附一条负向对照：把 `summary` 放错层级时
-  浏览器半必须读不到。
+  浏览器侧必须读不到。
 
 ---
 
@@ -248,8 +248,8 @@ type Summary = {
 
 - `node scripts/test-fold.mjs` —— 65 项断言，零依赖。
 - `node scripts/verify-layout.mjs` —— 58 项布局/主题/文案键/Hook 顺序/席位安全断言。
-- `node scripts/verify-contract.mjs` —— 261 项装配形状断言，其中 §11 是**跨两半的
-  端到端契约**（见 §7）：用宿主真实的 store 写一次，交给浏览器半真实的 `readSummary` /
+- `node scripts/verify-contract.mjs` —— 261 项装配形状断言，其中 §11 是**跨两侧的
+  端到端契约**（见 §7）：用宿主真实的 store 写一次，交给浏览器侧真实的 `readSummary` /
   `normaliseRows` 读回，逐值比对，并附负向对照。
 - 宿主 Config 报告 `status: "schema"`，即宿主模块加载成功，也即 `zod`（真机 4.6.5）
   与 `@deepseek-ai/schemastery` 在宿主进程内可解析，且 `lib/projection.js` 里所有

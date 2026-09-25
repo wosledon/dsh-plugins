@@ -52,7 +52,7 @@ dsh-plugin-scheduled-tasks/
 ├── lib/scheduler.js             # Lead  ← 定时器 + 派发 + 并发/去重
 ├── lib/tools.js                 # teammate: agents ← 模型工具注册
 ├── lib/skill.js                 # teammate: agents ← 对话创建任务的 skill 注册
-├── client.js                    # teammate: client ← 浏览器半
+├── client.js                    # teammate: client ← 浏览器侧
 ├── skills/scheduled-tasks/SKILL.md  # teammate: docs ← 人类可读 skill 备份
 ├── README.md                    # teammate: docs
 └── scripts/verify-contract.mjs  # teammate: verify ← 装配形状自检
@@ -134,7 +134,7 @@ type Schedule =
 `tasks` 与 `internal` 在 `Config` schema 里**必须声明为 `.volatile()`**：
 `@deepseek-ai/dsh-settings` 的 `describe()` 只投影 volatile 节点，且没有任何
 volatile 字段的条目会让 `mutate()` 直接抛错。由于第三方插件无法新增 Remote
-namespace，`remote.settings` 是浏览器半唯一的读写通道，所以这两个节点必须可读写。
+namespace，`remote.settings` 是浏览器侧唯一的读写通道，所以这两个节点必须可读写。
 
 副作用：schemastery 解析后 volatile 字段的值是**访问器对象**（带 `get()`），
 不是数据本身。`lib/config.js` 的 `plainConfig()` / `resolveConfig()` 负责解包；
@@ -180,7 +180,7 @@ type RunState = {
 type ManualRunRequest = { taskId: string; requestedAt: number }
 ```
 
-浏览器半**不能创建 Agent**，所以界面上的「立即运行」只能把意图写成数据：
+浏览器侧**不能创建 Agent**，所以界面上的「立即运行」只能把意图写成数据：
 客户端往 `internal.manualRuns` 追加一条请求，宿主调度器在**下一次 tick**
 （≤ `tickMs`）消费它、执行任务并清空队列。超过 5 分钟的请求会被丢弃
 （多半来自已经结束的界面会话）。

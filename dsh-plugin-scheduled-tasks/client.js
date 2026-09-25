@@ -1,5 +1,5 @@
 /**
- * 「定时任务」——浏览器半（无构建步骤的纯 JS，与 dsh-plugin-reasoning-effort 同风格）。
+ * 「定时任务」——浏览器侧（无构建步骤的纯 JS，与 dsh-plugin-reasoning-effort 同风格）。
  *
  * 职责（CONTRACT.md §5）：
  *   - 在 `sidebar.panellist` 登记一个按钮（id = PANEL_ID），在 `main` 登记同 key 的整页；
@@ -18,7 +18,7 @@
  *      而宿主的 `prime()`（补排期）只在进程启动时跑一次 —— 所以**界面新建/重新启用
  *      的任务必须自己带上 nextRunAt**，否则它永远不会被判定为到期（once 例外，
  *      它按自身 `at` 判定）。
- *   2. 浏览器半无法创建 Agent，「立即运行」只能把意图写成
+ *   2. 浏览器侧无法创建 Agent，「立即运行」只能把意图写成
  *      `internal.manualRuns: [{ taskId, requestedAt }]`；宿主的调度器在下一次 tick
  *      消费并清空该队列（见 lib/scheduler.js drainManualRuns）。`internal.log` 由
  *      宿主写，客户端**只读**。
@@ -674,7 +674,7 @@ window.__ModuleLoader__.load({
 
     /**
      * 时间表的本地化描述。
-     * 客户端自己实现而不是复用 lib/cron.js：浏览器半不能 import 宿主模块。
+     * 客户端自己实现而不是复用 lib/cron.js：浏览器侧不能 import 宿主模块。
      * @param {object} schedule
      * @param {(key: string) => string} t
      */
@@ -1041,7 +1041,7 @@ window.__ModuleLoader__.load({
         /**
          * 「立即运行」= 往 `internal.manualRuns` 追加一条请求。
          *
-         * 浏览器半不能创建 Agent，真正执行由宿主的下一次 tick 完成；这里在写入前
+         * 浏览器侧不能创建 Agent，真正执行由宿主的下一次 tick 完成；这里在写入前
          * 重新 describe 拿最新 revision（该队列可能与其它设置写入并行推进）。
          */
         const requestRun = React.useCallback(async (taskId) => {

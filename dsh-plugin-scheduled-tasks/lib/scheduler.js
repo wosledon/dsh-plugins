@@ -80,7 +80,7 @@ export function createScheduler(ctx, store, runner, config) {
   /**
    * 消费「立即运行」请求队列。
    *
-   * 浏览器半不能创建 Agent，所以界面点「立即运行」时只能把意图写成
+   * 浏览器侧不能创建 Agent，所以界面点「立即运行」时只能把意图写成
    * `internal.manualRuns` 里的一条请求；宿主在下一次 tick 把它变成真正的运行。
    * 过期请求（超过 5 分钟）直接丢弃：它多半来自已经结束的界面会话，
    * 隔了很久突然跑一次对用户是惊吓而不是功能。

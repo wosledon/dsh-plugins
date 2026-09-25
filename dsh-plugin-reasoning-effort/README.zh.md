@@ -52,8 +52,8 @@ DSH 的模型选择器只列出**适配器已公布**的推理等级。对于 pi
 dsh-plugin-reasoning-effort/
 ├── package.json          # dsh.bundle.patch + dsh.client 声明
 ├── cordis.patch.yml      # bundle 补丁：插入一行宿主条目
-├── index.js              # 宿主半：空实现（浏览器半才有行为）
-├── client.js             # 浏览器半：懒工厂 + 席位注册 + 卡片组件
+├── index.js              # 宿主侧：空实现（浏览器侧才有行为）
+├── client.js             # 浏览器侧：懒工厂 + 席位注册 + 卡片组件
 ├── icon.svg              # 插件页图标
 ├── locale/{en,zh}.json   # 插件页标题与描述
 ├── scripts/verify-contract.mjs   # 契约自检（开发用，不随包安装）
@@ -61,7 +61,7 @@ dsh-plugin-reasoning-effort/
 └── README.zh.md          # 中文
 ```
 
-宿主半之所以存在，只是因为 `dsh-client-modules` 只扫描**已启用 Loader 条目**
+宿主侧之所以存在，只是因为 `dsh-client-modules` 只扫描**已启用 Loader 条目**
 的 `package.json dsh.client` 声明；浏览器 bundle 通过 `exports["./client"]`
 取到。没有这一行，`client.js` 就不会进入 `window.__DSH_BOOT__`。
 
@@ -136,7 +136,7 @@ plugin_manager remove_bundle   target: dsh-plugin-reasoning-effort
 已验证：
 
 - 包与补丁清单可解析，`insert` 行名与包名一致；
-- 浏览器半以包名为 id 注册懒工厂，工厂返回合法的 Cordis 插件对象；
+- 浏览器侧以包名为 id 注册懒工厂，工厂返回合法的 Cordis 插件对象；
 - `apply()` 只在 `settings.models.provider-card` 上登记 **keyed** 单元格，
   键取自 `remote.llm.listConfigurableProviders()` 的真实 `settingsNs`；
 - 写入形状：单条 `set` 操作，路径落在 `providers/<route>/models`（不是数组

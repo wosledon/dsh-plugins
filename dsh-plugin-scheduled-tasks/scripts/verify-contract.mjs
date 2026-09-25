@@ -252,7 +252,7 @@ const clientFile = process.env.DSH_VERIFY_CLIENT !== undefined && process.env.DS
   : path.join(root, 'client.js');
 const clientSource = readText(clientFile);
 if (clientSource === undefined) {
-  console.log('  skip client.js 缺失，跳过浏览器半的注册形状检查');
+  console.log('  skip client.js 缺失，跳过浏览器侧的注册形状检查');
 } else {
   let entry;
   const reactBase = {
@@ -476,10 +476,10 @@ if (!has(cronFile)) {
 }
 
 /* ------------------------------------------------------------------ */
-/* 3. index.js 宿主半                                                   */
+/* 3. index.js 宿主侧                                                   */
 /* ------------------------------------------------------------------ */
 
-section('3. index.js 宿主半（§6.3/§6.4）');
+section('3. index.js 宿主侧（§6.3/§6.4）');
 const indexFile = path.join(root, 'index.js');
 const REQUIRED_LIB = ['config.js', 'cron.js', 'model.js', 'store.js', 'runner.js', 'scheduler.js', 'tools.js', 'skill.js'];
 for (const name of REQUIRED_LIB) {

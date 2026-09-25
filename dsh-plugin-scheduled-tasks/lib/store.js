@@ -212,7 +212,7 @@ export function createStore(ctx, rawConfig) {
 
     /**
      * 写回「立即运行」请求队列。
-     * 宿主消费后清空；浏览器半只写这个字段，不碰 tasks（两者互不覆盖）。
+     * 宿主消费后清空；浏览器侧只写这个字段，不碰 tasks（两者互不覆盖）。
      */
     async setManualRuns(requests) {
       const manualRuns = Array.isArray(requests) ? requests : [];

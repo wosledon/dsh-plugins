@@ -6,12 +6,12 @@
 由基于 Cordis 的 Loader 装载。
 
 这里的每个插件都是自包含的包，可以用 `plugin_manager` 装进任意 DSH profile。
-它们**都不需要构建步骤**：浏览器半是 DSH 模块装载器要求的纯 JavaScript bundle，
-宿主半是普通的 ESM。
+它们**都不需要构建步骤**：浏览器侧是 DSH 模块装载器要求的纯 JavaScript bundle，
+宿主侧是普通的 ESM。
 
 ## 插件
 
-| 插件 | 作用 | 宿主半 | 浏览器半 |
+| 插件 | 作用 | 宿主侧 | 浏览器侧 |
 | --- | --- | --- | --- |
 | [`dsh-plugin-reasoning-effort`](dsh-plugin-reasoning-effort/README.zh.md) | 在「设置 → 模型」里为手工声明的供应商按**每个模型**编辑推理强度 | 空（不注册任何东西） | 有 |
 | [`dsh-plugin-scheduled-tasks`](dsh-plugin-scheduled-tasks/README.zh.md) | 按时间表（cron / 间隔 / 每日 / 每周 / 一次性）唤醒大模型执行提示词任务，带管理面板、按任务的运行记录与对话创建 | 有（调度器、执行引擎、工具、skill） | 有 |
@@ -54,7 +54,7 @@ DSH 的模型选择器只提供「适配器已公布」的推理等级。对于�
 拿到这些数据要走两条不同的路，因为两个视图问的是不同的问题：
 
 - **单个会话内、按模型**是会话派生的值，而官方要求客户端不得自己折叠会话事件。
-  所以宿主注册一个名为 `tokenByModel` 的会话投影并带 `wire.view`，浏览器半只读
+  所以宿主注册一个名为 `tokenByModel` 的会话投影并带 `wire.view`，浏览器侧只读
   `useProjection('tokenByModel')`。它渲染为 `conversation.session.header.utilities`
   里的一个席位 —— 一个总量 + 按模型的浮层 —— 会话没有用量时不渲染任何东西。
 - **跨会话**不属于任何单个会话，装不进投影；而 `ctx.sessionQuery` 的方法都不是
@@ -90,7 +90,7 @@ plugin_manager install_bundle   target: file:E:\repos\dsh-plugins\dsh-plugin-sch
 
 ### 两个会让人意外的点
 
-**1. 可能需要重启宿主。** 刷新页面只换**浏览器半**。**宿主半**跑在 DSH 进程里，
+**1. 可能需要重启宿主。** 刷新页面只换**浏览器侧**。**宿主侧**跑在 DSH 进程里，
 而 Node 的 ESM 模块缓存按解析后的路径命中 —— 换掉磁盘上的文件并不会换掉已经
 导入的模块。如果宿主侧的改动（某个工具、调度器、新的配置字段）没生效，请重启。
 
@@ -150,16 +150,16 @@ dsh-plugin-token-usage
 ```
 .
 ├── dsh-plugin-reasoning-effort/
-│   ├── index.js                 宿主半（有意留空）
-│   ├── client.js                浏览器半
+│   ├── index.js                 宿主侧（有意留空）
+│   ├── client.js                浏览器侧
 │   ├── cordis.patch.yml         bundle 补丁：插入一行宿主条目
 │   ├── package.json             dsh.bundle.patch + dsh.client 声明
 │   ├── locale/{en,zh}.json
 │   └── scripts/verify-contract.mjs
 └── dsh-plugin-scheduled-tasks/
-    ├── index.js                 宿主半入口
+    ├── index.js                 宿主侧入口
     ├── lib/                     调度器、执行引擎、cron、store、工具、skill…
-    ├── client.js                浏览器半：面板 + 双 tab 页面
+    ├── client.js                浏览器侧：面板 + 双 tab 页面
     ├── CONTRACT.md              冻结的内部契约（数据形状、不变式）
     ├── cordis.patch.yml
     ├── package.json
@@ -167,9 +167,9 @@ dsh-plugin-token-usage
     ├── skills/scheduled-tasks/SKILL.md
     └── scripts/                 上面列出的那些自检脚本
 └── dsh-plugin-token-usage/
-    ├── index.js                 宿主半：tokenByModel 投影 + 有界的跨会话扫描
+    ├── index.js                 宿主侧：tokenByModel 投影 + 有界的跨会话扫描
     ├── lib/                     fold（纯函数）、projection、summary、store、config、constants
-    ├── client.js                浏览器半：会话内指示器 + 跨会话页面
+    ├── client.js                浏览器侧：会话内指示器 + 跨会话页面
     ├── CONTRACT.md              冻结的内部契约（数据形状、不变式）
     ├── cordis.patch.yml
     ├── package.json

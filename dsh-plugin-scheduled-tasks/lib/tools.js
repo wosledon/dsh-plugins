@@ -1,5 +1,5 @@
 /**
- * lib/tools.js — 「对话创建任务」的模型工具注册（宿主半）。
+ * lib/tools.js — 「对话创建任务」的模型工具注册（宿主侧）。
  *
  * 约束（见 CONTRACT.md §3）：
  * - 纯 JS，**不 import 任何 @deepseek-ai/***；宿主能力由 index.js 注入。

@@ -3,16 +3,16 @@
  * verify-contract.mjs — 「Token 用量」插件的**装配形状**自检（零第三方依赖）。
  *
  * 这不是行为测试，也不模拟 React 渲染。它只回答一个问题：
- * 「插件两半的装配形状，和契约里写死的那些形状，是不是同一件事？」
+ * 「插件两侧的装配形状，和契约里写死的那些形状，是不是同一件事？」
  *
  * 覆盖 10 组：
  *   [1] 清单与行 id 一致（package.json / cordis.patch.yml / constants 三方同 id）
- *   [2] 客户端与宿主半的常量一致（PANEL_ID / CONFIG_NS / PROJECTION_KEY）
+ *   [2] 客户端与宿主侧的常量一致（PANEL_ID / CONFIG_NS / PROJECTION_KEY）
  *   [3] 【重点】两份 formatTokens / formatExact 实现逐值一致（真跑客户端半比对）
  *   [4] 四桶口径与官方一致（刻意不含 reasoningTokens）
  *   [5] 投影单元定义形状（静态解析 lib/projection.js：它 import zod，零依赖下不可 import）
  *   [6] 持久化通道的选择契约（configEditor 优先 / 完整 raw config / 先清空再返回）
- *   [7] 宿主半的装配形状（硬 inject=settings / 可选 sessionProjections / unref 定时器）
+ *   [7] 宿主侧的装配形状（硬 inject=settings / 可选 sessionProjections / unref 定时器）
  *   [8] lib/config.js 的 volatile 硬规则
  *   [9] 扫描的诚实性契约（新→旧、scanLimit、truncated、单个坏日志只 skipped+=1）
  *   [10] 文案键只在客户端（zh/en 键集合一致、LOCALE_NS 独立命名空间）
@@ -23,7 +23,7 @@
  *   - **静态解析**：lib/config.js（import schemastery）与 lib/projection.js（import zod）
  *     在零依赖的 Node 里解析不到，只能读源码断言形状 —— 这是本脚本存在的理由之一。
  *
- * client.js 用 `window.__ModuleLoader__` 桩跑起来，从 `__internals` 里取出浏览器半自己的
+ * client.js 用 `window.__ModuleLoader__` 桩跑起来，从 `__internals` 里取出浏览器侧自己的
  * formatTokens / formatExact，与 lib/fold.js 的那份逐个数字比对。重复实现无法避免
  * （浏览器 bundle 只拿到 `require`），但「重复且被验证」与「重复且会漂移」是两回事。
  *
@@ -384,10 +384,10 @@ check('行 id === PLUGIN_ID', insertRow.id === PLUGIN_ID, fmt(insertRow.id) + ' 
 check('CONFIG_NS === PANEL_ID（席位 id 与 settings ns 同一个 id）', CONFIG_NS === PANEL_ID, fmt(CONFIG_NS) + ' vs ' + fmt(PANEL_ID));
 
 /* ------------------------------------------------------------------ */
-/* 2. 客户端与宿主半的常量一致                                           */
+/* 2. 客户端与宿主侧的常量一致                                           */
 /* ------------------------------------------------------------------ */
 
-section('2. 客户端与宿主半常量一致');
+section('2. 客户端与宿主侧常量一致');
 
 check('client.js 可读', clientSource !== null, clientFile);
 const pickClientConst = (name) => {
@@ -409,7 +409,7 @@ check(
   fmt(clientProjectionKey) + ' vs ' + fmt(TOKEN_BY_MODEL_KEY),
 );
 
-// 浏览器半内部自洽：同一个席位 id 既要给 sidebar.panellist，也要给 main。
+// 浏览器侧内部自洽：同一个席位 id 既要给 sidebar.panellist，也要给 main。
 check(
   "sidebar.panellist 的 id 是 PANEL_ID",
   /name:\s*'sidebar\.panellist'[\s\S]{0,160}?id:\s*PANEL_ID/.test(clientCode),
@@ -423,7 +423,7 @@ check(
 // 运行时交叉核对：以 client.js 真跑出来的 __internals 为准，而不是只看源码文本。
 if (clientInternals === null) {
   check(
-    '运行时 __internals 可取（否则浏览器半常量无法交叉核对）',
+    '运行时 __internals 可取（否则浏览器侧常量无法交叉核对）',
     false,
     clientLoadError instanceof Error ? clientLoadError.message : String(clientLoadError),
   );
@@ -511,7 +511,7 @@ for (const [label, value] of EXACT_CASES) {
   );
 }
 
-// 顺带：浏览器半同样重复了一份 totalOf，口径也不能漂。
+// 顺带：浏览器侧同样重复了一份 totalOf，口径也不能漂。
 const clientTotalOf = clientInternals === null ? undefined : clientInternals.totalOf;
 const TOTAL_CASES = [
   ['四桶齐备', { uncachedInputTokens: 1000, outputTokens: 250, cacheReadTokens: 800, cacheWriteTokens: 40 }],
@@ -880,10 +880,10 @@ check('takeRefreshRequest 返回后内部值已清空（第二次为空）', ref
 check('再次 takeRefreshRequest 返回 null（不会重复扫描）', (await refreshStore.takeRefreshRequest()) === null);
 
 /* ------------------------------------------------------------------ */
-/* 7. 宿主半的装配形状                                                   */
+/* 7. 宿主侧的装配形状                                                   */
 /* ------------------------------------------------------------------ */
 
-section('7. 宿主半的装配形状（index.js）');
+section('7. 宿主侧的装配形状（index.js）');
 
 check('index.js 可读', indexSource !== null, indexFile);
 const injectMatch = /export const inject = \[([^\]]*)\]/.exec(indexCode);
@@ -1206,18 +1206,18 @@ check(
 );
 
 /* ------------------------------------------------------------------ */
-section('11. 跨两半的端到端契约：宿主写出的形状，浏览器半必须读得出来');
+section('11. 跨两侧的端到端契约：宿主写出的形状，浏览器侧必须读得出来');
 /* ------------------------------------------------------------------ */
 
 /*
- * 这是本脚本里唯一真正跨两半的断言，也是最有价值的一条。
+ * 这是本脚本里唯一真正跨两侧的断言，也是最有价值的一条。
  *
  * 数据流是：宿主折叠 → 写进插件配置的 `internal.summary` → settings 服务把它
- * 投影给客户端 → 浏览器半用 readSummary() 取回。中间任何一处嵌套层级、字段名
+ * 投影给客户端 → 浏览器侧用 readSummary() 取回。中间任何一处嵌套层级、字段名
  * 或大小写不一致，界面上都只是"没有数据"，不会报错——这是最难查的一类契约漂移。
  *
  * 做法：用**宿主真实的 store** 写一次（编辑器桩捕获它实际提交的完整 raw config），
- * 再把那份 config 按 settings.describe() 的返回形状包起来，交给**浏览器半真实的**
+ * 再把那份 config 按 settings.describe() 的返回形状包起来，交给**浏览器侧真实的**
  * readSummary/normaliseRows 去读，比对两端得到同一组数字。
  */
 if (clientInternals !== null && typeof clientInternals.readSummary === 'function') {
@@ -1273,16 +1273,16 @@ if (clientInternals !== null && typeof clientInternals.readSummary === 'function
     },
   };
   const readBack = clientInternals.readSummary(describeShape);
-  check('浏览器半从宿主写出的 config 里读到了 summary', readBack.summary !== null, fmt(readBack.summary));
-  check('浏览器半报告该 profile 可持久化', readBack.persistent === true);
+  check('浏览器侧从宿主写出的 config 里读到了 summary', readBack.summary !== null, fmt(readBack.summary));
+  check('浏览器侧报告该 profile 可持久化', readBack.persistent === true);
   check('读回的 scanned/total/truncated 与写入一致',
     readBack.summary?.scanned === 7 && readBack.summary?.total === 9 && readBack.summary?.truncated === true,
     fmt(readBack.summary));
   check('读回的 builtAt 与写入一致', readBack.summary?.builtAt === summary.builtAt, fmt(readBack.summary?.builtAt));
 
   const clientRows = clientInternals.normaliseRows(readBack.summary);
-  check('浏览器半归一出的行数与宿主一致', clientRows.length === hostRows.length, clientRows.length + ' vs ' + hostRows.length);
-  check('浏览器半归一出的顺序与宿主一致（都是按总量降序）',
+  check('浏览器侧归一出的行数与宿主一致', clientRows.length === hostRows.length, clientRows.length + ' vs ' + hostRows.length);
+  check('浏览器侧归一出的顺序与宿主一致（都是按总量降序）',
     clientRows.map((row) => row.key).join(',') === hostRows.map((row) => row.key).join(','),
     clientRows.map((row) => row.key).join(','));
   check('两端算出的每行 total 完全一致',
@@ -1296,7 +1296,7 @@ if (clientInternals !== null && typeof clientInternals.readSummary === 'function
     ok: true,
     value: { revision: 1, namespaces: [{ ns: CONFIG_NS, revision: 1, value: { summary }, user: { summary } }] },
   };
-  check('负向对照：summary 放错层级时浏览器半读不到（证明上一组不是假通过）',
+  check('负向对照：summary 放错层级时浏览器侧读不到（证明上一组不是假通过）',
     clientInternals.readSummary(misplaced).summary === null);
   // 负向对照 2：退回裸数组（我最初的错误假设）也必须读不到。真机返回的是信封，
   // 这条就是当初让"页面永远空却测试全绿"的那个形状。
@@ -1311,13 +1311,13 @@ if (clientInternals !== null && typeof clientInternals.readSummary === 'function
   check('没有本插件条目时 persistent 仍为 true（刷新按钮不该被禁）',
     clientInternals.readSummary(others).persistent === true && clientInternals.readSummary(others).summary === null);
 
-  // 浏览器半的紧凑格式化对宿主真实数值的呈现。
+  // 浏览器侧的紧凑格式化对宿主真实数值的呈现。
   // 总量 = (900+100+50) + (100+20) = 1170 → 1170/1000 = 1.17 → "1.2K"。
   const grand = hostRows.reduce((sum, row) => sum + row.total, 0);
-  check('浏览器半能格式化宿主真实总量（1170 → 1.2K）',
+  check('浏览器侧能格式化宿主真实总量（1170 → 1.2K）',
     clientInternals.formatTokens(grand) === '1.2K', clientInternals.formatTokens(grand));
 } else {
-  check('浏览器半暴露 readSummary（跨半契约可验证）', false, 'clientInternals.readSummary 缺失');
+  check('浏览器侧暴露 readSummary（跨半契约可验证）', false, 'clientInternals.readSummary 缺失');
 }
 
 /* ------------------------------------------------------------------ */

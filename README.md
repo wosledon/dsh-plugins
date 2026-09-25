@@ -6,13 +6,13 @@ Third-party plugins for **DeepSeek Harness** (DSH) — the desktop/web harness w
 plugins are declared as *bundles* and loaded by a Cordis-based Loader.
 
 Each plugin here is a self-contained package that can be installed into a DSH
-profile with `plugin_manager`. None of them require a build step: the browser half
+profile with `plugin_manager`. None of them require a build step: the browser side
 is a plain JavaScript bundle in the format the DSH module loader expects, and the
-host half is ordinary ESM.
+host side is ordinary ESM.
 
 ## Plugins
 
-| Plugin | What it does | Host half | Browser half |
+| Plugin | What it does | Host side | Browser side |
 | --- | --- | --- | --- |
 | [`dsh-plugin-reasoning-effort`](dsh-plugin-reasoning-effort/README.md) | Per-model reasoning-effort editor for hand-declared LLM providers, inside Settings → Models | empty (registers nothing) | yes |
 | [`dsh-plugin-scheduled-tasks`](dsh-plugin-scheduled-tasks/README.md) | Runs an LLM task on a schedule (cron / interval / daily / weekly / one-shot), with a management panel, per-task run history and conversational creation | yes (scheduler, runner, tools, skill) | yes |
@@ -61,7 +61,7 @@ questions:
 - **Per-model, in one session** is a session-derived value, and the official
   guidance is that the client must not fold session events itself. So the host
   registers a session projection named `tokenByModel` with a `wire.view`, and the
-  browser half just reads `useProjection('tokenByModel')`. It renders as a seat in
+  browser side just reads `useProjection('tokenByModel')`. It renders as a seat in
   `conversation.session.header.utilities` — a total with a per-model popover — and
   renders nothing while the session has no usage.
 - **Across sessions** belongs to no single session, so no projection can hold it,
@@ -102,7 +102,7 @@ plugin_manager install_bundle   target: file:E:\repos\dsh-plugins\dsh-plugin-sch
 ### Two things that surprise people
 
 **1. A host restart may be required.** Refreshing the page only reloads the
-*browser* half. The *host* half runs inside the DSH process, and Node's ESM module
+*browser* side. The *host* side runs inside the DSH process, and Node's ESM module
 cache is keyed by resolved path — so replacing the files on disk does not replace
 the already-imported module. If a host-side change (a tool, the scheduler, a new
 config field) does not appear, restart the harness.
@@ -168,16 +168,16 @@ spacing, contrast in light and dark themes. Those need a real page.
 ```
 .
 ├── dsh-plugin-reasoning-effort/
-│   ├── index.js                 host half (empty by design)
-│   ├── client.js                browser half
+│   ├── index.js                 host side (empty by design)
+│   ├── client.js                browser side
 │   ├── cordis.patch.yml         bundle patch: inserts one host row
 │   ├── package.json             dsh.bundle.patch + dsh.client declarations
 │   ├── locale/{en,zh}.json
 │   └── scripts/verify-contract.mjs
 └── dsh-plugin-scheduled-tasks/
-    ├── index.js                 host half entry
+    ├── index.js                 host side entry
     ├── lib/                     scheduler, runner, cron, store, tools, skill…
-    ├── client.js                browser half: panel + two-tab page
+    ├── client.js                browser side: panel + two-tab page
     ├── CONTRACT.md              frozen internal contract (data shapes, invariants)
     ├── cordis.patch.yml
     ├── package.json
@@ -185,9 +185,9 @@ spacing, contrast in light and dark themes. Those need a real page.
     ├── skills/scheduled-tasks/SKILL.md
     └── scripts/                 the self-check scripts listed above
 └── dsh-plugin-token-usage/
-    ├── index.js                 host half: tokenByModel projection + bounded cross-session scan
+    ├── index.js                 host side: tokenByModel projection + bounded cross-session scan
     ├── lib/                     fold (pure), projection, summary, store, config, constants
-    ├── client.js                browser half: header indicator + cross-session page
+    ├── client.js                browser side: header indicator + cross-session page
     ├── CONTRACT.md              frozen internal contract (data shapes, invariants)
     ├── cordis.patch.yml
     ├── package.json

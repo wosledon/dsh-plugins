@@ -1,7 +1,7 @@
 /**
- * 宿主半。
+ * 宿主侧。
  *
- * 本插件的全部行为都在浏览器半（`./client`）：它把自己注册进
+ * 本插件的全部行为都在浏览器侧（`./client`）：它把自己注册进
  * `settings.models.provider-card` 席位，为自定义供应商的每个模型编辑
  * `providers.<route>.models[].reasoningEfforts`。
  *

@@ -2,7 +2,7 @@
  * 契约自检 —— 不渲染 React，只验证「装配形状」。
  *
  * 它回答四个问题：
- *   1. 浏览器半真的以包名为 id 注册了懒工厂（id 与 package.json 的 name 一致）；
+ *   1. 浏览器侧真的以包名为 id 注册了懒工厂（id 与 package.json 的 name 一致）；
  *   2. 工厂返回的是合法的 Cordis 插件对象（inject + apply）；
  *   3. apply() 只在 `settings.models.provider-card` 上登记 **keyed** 单元格，
  *      键取自 `remote.llm.listConfigurableProviders()` 真实返回的 settingsNs；

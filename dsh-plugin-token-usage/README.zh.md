@@ -13,7 +13,7 @@
 > 但回答不了"其中模型 A 占多少、模型 B 占多少"。
 
 本插件补的正是这一段：宿主把按模型的拆分算好一次，作为 `wire.view` 投给浏览器；
-跨会话表格则靠宿主做一次**有上限**的扫描得出，浏览器半自己算不出来。
+跨会话表格则靠宿主做一次**有上限**的扫描得出，浏览器侧自己算不出来。
 
 ## 它做什么
 
@@ -50,9 +50,9 @@
 > projection. The value reaches the Client already computed; the Client does not fold session
 > events itself.
 
-所以宿主半注册了一个**自己的会话投影单元** `tokenByModel`（`stateVersion: 1`，
+所以宿主侧注册了一个**自己的会话投影单元** `tokenByModel`（`stateVersion: 1`，
 带 `stateSchema`、`init`、对无关事件返回同一引用的纯 `apply`，以及
-承载 `viewSchema` 与 `view` 的 `wire` 块）。浏览器半只是
+承载 `viewSchema` 与 `view` 的 `wire` 块）。浏览器侧只是
 `useProjection('tokenByModel')` 取值并渲染，完全不接触事件流。
 
 `assistant/message` 事件在 `message.source` 里带着这次调用的身份
@@ -65,11 +65,11 @@
 ### 跨会话总量只能由宿主扫描
 
 跨会话汇总不属于任何单个会话，装不进会话投影。而 `ctx.sessionQuery` 的方法
-**都不是** `@Remote`，浏览器半根本读不到别的会话的日志。唯一走得通的路是：
+**都不是** `@Remote`，浏览器侧根本读不到别的会话的日志。唯一走得通的路是：
 
 1. 宿主列出会话、按最新优先读日志、折叠 `assistant/message` 事件，
    把汇总写进插件设置；
-2. 浏览器半用 `remote.settings.describe()` 读回来。
+2. 浏览器侧用 `remote.settings.describe()` 读回来。
 
 为什么非得走设置：`ctx.remote.*` 是**编译期固定白名单**，第三方纯 JS 插件加不了
 Remote 命名空间 —— 根本没有注册入口。`remote.settings` 是唯一通用的读写通道，
@@ -106,14 +106,14 @@ Remote 命名空间 —— 根本没有注册入口。`remote.settings` 是唯�
 dsh-plugin-token-usage/
 ├── package.json          # dsh.bundle.patch + dsh.client 声明
 ├── cordis.patch.yml      # bundle 补丁：插入 id 为 token-usage 的宿主条目
-├── index.js              # 宿主半：注册投影 + 有上限的跨会话扫描
+├── index.js              # 宿主侧：注册投影 + 有上限的跨会话扫描
 ├── lib/constants.js      # 无依赖常量（命名空间、投影 key、四个桶、上限）
 ├── lib/fold.js           # 纯函数：四个桶、按 (provider, model) 折叠、行、格式化
 ├── lib/config.js         # Config schema（schemastery）：scanLimit + volatile internal
 ├── lib/store.js          # 设置层：读写汇总、消费刷新请求
 ├── lib/projection.js     # tokenByModel 会话投影单元及其 wire.view schema
 ├── lib/summary.js        # 跨会话扫描：列会话、读取、折叠、统计跳过
-├── client.js             # 浏览器半：两个界面 + 页面与指示器组件
+├── client.js             # 浏览器侧：两个界面 + 页面与指示器组件
 ├── locale/{en,zh}.json   # 插件页标题与描述
 ├── icon.svg              # 面板图标（currentColor，24x24）
 ├── scripts/test-fold.mjs # lib/fold.js 纯函数测试（零依赖）
@@ -123,7 +123,7 @@ dsh-plugin-token-usage/
 ```
 
 `lib/fold.js` 是**零依赖纯函数层**：除 `lib/constants.js` 外不 import 任何东西，
-由宿主半与自检脚本共用，纯 Node 下不需要任何垫片就能跑。
+由宿主侧与自检脚本共用，纯 Node 下不需要任何垫片就能跑。
 
 ## 安装
 
@@ -140,10 +140,10 @@ plugin_manager install_bundle  target: file:E:\repos\dsh-plugins\dsh-plugin-toke
       name: 'dsh-plugin-token-usage'
 ```
 
-浏览器半不需要在补丁里声明：`dsh-client-modules` 扫描已启用 Loader 条目的
+浏览器侧不需要在补丁里声明：`dsh-client-modules` 扫描已启用 Loader 条目的
 `package.json dsh.client`，再通过 `exports["./client"]` 取 bundle。
 Loader 行 id `token-usage` 同时是本插件的设置命名空间，
-浏览器半写刷新请求时用的就是它。
+浏览器侧写刷新请求时用的就是它。
 
 ### 改动之后要重新安装
 
@@ -207,18 +207,18 @@ node scripts/verify-contract.mjs  # 全部通过：261 项装配形状断言
 
 `verify-contract.mjs` 在这个插件上最值得留着，因为本包有四条性质**没法靠运行它本身**验证：
 
-- **两半的常量必须一致。** `client.js` 无法 import `lib/constants.js`（浏览器 bundle 只拿到
+- **两侧的常量必须一致。** `client.js` 无法 import `lib/constants.js`（浏览器 bundle 只拿到
   `require`），所以 `PANEL_ID`、`CONFIG_NS`、`PROJECTION_KEY`、`TOKEN_BY_MODEL_KEY` 各有两份。
-  脚本同时解析两侧并比对，还用 `window.__ModuleLoader__` 桩把浏览器半**真的**跑起来。
+  脚本同时解析两侧并比对，还用 `window.__ModuleLoader__` 桩把浏览器侧**真的**跑起来。
 - **两份 `formatTokens` 必须逐值一致。** 出于同样的原因这份重复无法避免。脚本从
-  `__internals` 取出浏览器半那份，与 `lib/fold.js` 逐值比对 16 个取值加上
+  `__internals` 取出浏览器侧那份，与 `lib/fold.js` 逐值比对 16 个取值加上
   `-1` / `NaN` / `Infinity` 三个边界。把任一侧的阈值改掉都会让它失败，所以这不是走过场。
-- **数据形状必须挺过两半之间的那一跳。** 宿主折叠 → 写入 `internal.summary` → settings 服务
+- **数据形状必须挺过两侧之间的那一跳。** 宿主折叠 → 写入 `internal.summary` → settings 服务
   投影 → 浏览器读回。任何一处嵌套层级、字段名或大小写不一致，界面上都只表现为"没有数据"，
   而不会报错。脚本用**宿主真实的 store** 写一次（捕获它实际提交的完整 raw config），
-  把那份 config 按 `settings.describe()` 的返回形状包起来，交给浏览器半真实的
+  把那份 config 按 `settings.describe()` 的返回形状包起来，交给浏览器侧真实的
   `readSummary` / `normaliseRows` 读回，逐行比对两端——并附一条负向对照：把 `summary`
-  放上一层，浏览器半必须什么都读不到。
+  放上一层，浏览器侧必须什么都读不到。
 - **持久化必须按失败回退，而不是按可用性二选一。** `mode` 只决定"优先用谁"；
   `persist()` 两条通道都试，只有两条都抛错才算失败。脚本用桩做了行为验证 ——
   `configEditor` 抛错时仍会经 `settings` 写成功，两条都死则如实返回 `false`。
@@ -228,7 +228,7 @@ node scripts/verify-contract.mjs  # 全部通过：261 项装配形状断言
 `word-break: break-all`、根容器不声明 `height: 100%`，以及**两个组件里所有 hook 都在第一个
 `return` 之前** —— 违反这条会让整个 slot 变空白（React #310）。
 
-这套断言覆盖的是纯函数层 —— 插件两半都依赖它算数：
+这套断言覆盖的是纯函数层 —— 插件两侧都依赖它算数：
 
 | 面 | 覆盖内容 |
 | --- | --- |
@@ -242,9 +242,9 @@ node scripts/verify-contract.mjs  # 全部通过：261 项装配形状断言
 
 ### 真机端到端（本会话在运行中的 Host 上实测）
 
-- **宿主半激活**：本插件的 Config 报告 `status: "schema"`。这同时证明 `zod` 与
+- **宿主侧激活**：本插件的 Config 报告 `status: "schema"`。这同时证明 `zod` 与
   `@deepseek-ai/schemastery` 在宿主进程内可解析。
-- **浏览器半激活**：客户端席位 `token-usage` 在 `conversation.session.header.utilities`
+- **浏览器侧激活**：客户端席位 `token-usage` 在 `conversation.session.header.utilities`
   中 `active: true`，与官方 `open-in-app`、`session-log-download` 并列，
   且没有顶掉任何官方控件。
 - **投影 schema 在真机 `zod` 4.6.5 下合法**：宿主模块加载成功，
@@ -270,8 +270,8 @@ plugin_manager install_bundle target: file:E:\repos\dsh-plugins\dsh-plugin-token
 ```
 
 然后**重启 Host**（或重新启用该 Loader 条目）才会加载新的 JavaScript 生成；
-只刷新页面只能拿到新的浏览器半 bundle。Node 的 ESM 模块缓存按解析路径命中，
-换掉磁盘文件不会换掉已经导入的模块 —— 所以宿主半的改动（投影、扫描、config schema）
+只刷新页面只能拿到新的浏览器侧 bundle。Node 的 ESM 模块缓存按解析路径命中，
+换掉磁盘文件不会换掉已经导入的模块 —— 所以宿主侧的改动（投影、扫描、config schema）
 在重启之前看起来就像"修了没用"。
 
 ### 仓库工具脚本的运行前提

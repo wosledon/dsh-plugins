@@ -1,5 +1,5 @@
 /**
- * 「Token 用量」插件 —— 浏览器半。
+ * 「Token 用量」插件 —— 浏览器侧。
  *
  * 两个界面，各自用能走通的那条数据通道：
  *
@@ -266,7 +266,7 @@ window.__ModuleLoader__.load({
 
     /*
      * 为什么这里要重复一份 formatTokens：
-     * 浏览器半是独立的 bundle，只经 `__ModuleLoader__` 注册，工厂只拿到 `require`，
+     * 浏览器侧是独立的 bundle，只经 `__ModuleLoader__` 注册，工厂只拿到 `require`，
      * 无法 import 宿主的 `lib/fold.js`（它不在 boot graph 里）。
      * 重复是不得已，所以契约里把它列为必须一致的实现，并由 verify-contract
      * 逐值比对两份实现——重复但被验证，而不是重复且可能漂移。
@@ -1175,7 +1175,7 @@ window.__ModuleLoader__.load({
     }
 
     /*
-     * 测试接缝：自检脚本用它逐值比对浏览器半与 lib/fold.js 的格式化实现。
+     * 测试接缝：自检脚本用它逐值比对浏览器侧与 lib/fold.js 的格式化实现。
      * Cordis 只读 `inject` / `apply` / `name` / `Config`，多余导出会被忽略。
      */
     const internals = {

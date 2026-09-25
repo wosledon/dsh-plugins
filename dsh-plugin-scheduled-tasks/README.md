@@ -73,7 +73,7 @@ only names pre-declared in official bundles (`settings`, `workspaceFiles`, `llm`
 and a third-party pure-JS plugin **cannot add** a namespace —— it is not that "it isn't
 documented", there is simply no registration entry point at all.
 
-So the browser half of this plugin has no custom Remote whatsoever; it only reuses the
+So the browser side of this plugin has no custom Remote whatsoever; it only reuses the
 existing `ctx.remote.settings.describe()` / `mutate(ns, ops, revision)` as its read/write
 channel:
 
@@ -125,7 +125,7 @@ dsh-plugin-scheduled-tasks/
 ├── lib/scheduler.js      # timer + dispatch + concurrency limit + overlap dedup
 ├── lib/tools.js          # model tools scheduled_task_*
 ├── lib/skill.js          # programmatic registration of the scheduled-tasks skill
-├── client.js             # browser half: lazy factory + two slots + page components
+├── client.js             # browser side: lazy factory + two slots + page components
 ├── skills/scheduled-tasks/SKILL.md   # human-readable backup of the skill
 ├── locale/{en,zh}.json   # plugin page title and description
 ├── icon.svg              # panel icon (currentColor, 24x24)
@@ -155,7 +155,7 @@ inserts one host entry:
       name: 'dsh-plugin-scheduled-tasks'
 ```
 
-The browser half does not need to be declared in the patch: `dsh-client-modules` scans the
+The browser side does not need to be declared in the patch: `dsh-client-modules` scans the
 `package.json dsh.client` of enabled Loader entries and then takes the bundle through
 `exports["./client"]`.
 
@@ -276,10 +276,10 @@ those 2 failures.
 
 ### Real-device end-to-end (actually measured in this session on a running Host)
 
-- **Host half activated**: `Config.listConfigs` finds `include:scheduled-tasks`
+- **Host side activated**: `Config.listConfigs` finds `include:scheduled-tasks`
   (status `schema`); the five `scheduled_task_*` tools and the `scheduled-tasks` skill
   actually appear in the session's tool/skill catalog.
-- **Browser half activated**: the live client slot shows `sidebar.panellist` has an active
+- **Browser side activated**: the live client slot shows `sidebar.panellist` has an active
   placeholder `{ id: "scheduled-tasks", order: 20 }`, and `main` has an active placeholder
   `{ key: "scheduled-tasks" }`.
 - **Conversation creation works**: `scheduled_task_create` really creates a task
@@ -343,7 +343,7 @@ plugin_manager install_bundle target: file:E:\repos\dsh-plugins\dsh-plugin-sched
 ```
 
 Then **restart the Host** (or re-enable that Loader entry) before the new JavaScript build is
-loaded; refreshing the page alone only gets you the new browser-half bundle. This session
+loaded; refreshing the page alone only gets you the new browser-side bundle. This session
 measured it after changing the runner: the file on disk was already updated, but
 `scheduled_task_run` in the same process was still running the old code (this is normal in
 Docker-style incremental development, but when troubleshooting it is easy to misjudge it as

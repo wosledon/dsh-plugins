@@ -3,7 +3,7 @@
  *
  * 零第三方依赖：直接 `node scripts/test-fold.mjs` 即可运行，不需要
  * schemastery 垫片，也不需要 DSH。这是本插件最该被信任的一层——
- * 宿主半与客户端半都用它算数。
+ * 宿主侧与客户端半都用它算数。
  */
 import {
   addBuckets,

@@ -15,7 +15,7 @@ The built-in `@deepseek-ai/dsh-token-meter` already registers a session projecti
 
 This plugin fills exactly that gap: the host computes the per-model split once and ships it to
 the browser as a `wire.view`, and a bounded host scan produces the cross-session table that
-the browser half cannot compute by itself.
+the browser side cannot compute by itself.
 
 ## What it does
 
@@ -57,10 +57,10 @@ The official practice rule is explicit:
 > projection. The value reaches the Client already computed; the Client does not fold session
 > events itself.
 
-So the host half registers a **session projection unit of its own**, `tokenByModel`
+So the host side registers a **session projection unit of its own**, `tokenByModel`
 (`stateVersion: 1`, with a `stateSchema`, an `init`, a pure `apply` that returns the same
 reference for irrelevant events, and a `wire` block carrying `viewSchema` and `view`). The
-browser half only calls `useProjection('tokenByModel')` and renders what it gets; it never
+browser side only calls `useProjection('tokenByModel')` and renders what it gets; it never
 touches the event stream.
 
 An `assistant/message` event carries the identity of the call in
@@ -73,12 +73,12 @@ session only, with no per-model breakdown — and the breakdown is the whole poi
 ### The cross-session total can only be scanned on the Host
 
 The cross-session aggregate belongs to no single session, so it does not fit in a session
-projection. And `ctx.sessionQuery`'s methods are **not** `@Remote`, so the browser half cannot
+projection. And `ctx.sessionQuery`'s methods are **not** `@Remote`, so the browser side cannot
 read another session's log at all. The only way through is:
 
 1. the host lists sessions, reads their logs (newest first), folds the `assistant/message`
    events, and writes the summary into the plugin settings;
-2. the browser half reads it back with `remote.settings.describe()`.
+2. the browser side reads it back with `remote.settings.describe()`.
 
 Why settings in particular: `ctx.remote.*` is a **whitelist fixed at compile time**, and a
 third-party pure-JS plugin cannot add a Remote namespace — there is no registration entry
@@ -122,14 +122,14 @@ already been proven on a real device by the sibling plugin `dsh-plugin-scheduled
 dsh-plugin-token-usage/
 ├── package.json          # dsh.bundle.patch + dsh.client declarations
 ├── cordis.patch.yml      # bundle patch: inserts the host entry with id token-usage
-├── index.js              # host half: projection registration + bounded cross-session scan
+├── index.js              # host side: projection registration + bounded cross-session scan
 ├── lib/constants.js      # dependency-free constants (namespaces, projection key, buckets, limits)
 ├── lib/fold.js           # pure functions: buckets, folding by (provider, model), rows, formatting
 ├── lib/config.js         # Config schema (schemastery): scanLimit + volatile internal
 ├── lib/store.js          # settings layer: read/write the summary, consume the refresh request
 ├── lib/projection.js     # the tokenByModel session projection unit plus its wire.view schema
 ├── lib/summary.js        # cross-session scan: list sessions, read, fold, count skips
-├── client.js             # browser half: two surfaces + page and meter components
+├── client.js             # browser side: two surfaces + page and meter components
 ├── locale/{en,zh}.json   # plugin page title and description
 ├── icon.svg              # panel icon (currentColor, 24x24)
 ├── scripts/test-fold.mjs # lib/fold.js pure-function tests (zero dependencies)
@@ -139,7 +139,7 @@ dsh-plugin-token-usage/
 ```
 
 `lib/fold.js` is a **zero-dependency pure-function layer**: it imports nothing but
-`lib/constants.js`, it is shared by the host half and by the self-check script, and it runs
+`lib/constants.js`, it is shared by the host side and by the self-check script, and it runs
 under plain Node without any shim.
 
 ## Installation
@@ -158,10 +158,10 @@ one host entry:
       name: 'dsh-plugin-token-usage'
 ```
 
-The browser half does not need to be declared in the patch: `dsh-client-modules` scans the
+The browser side does not need to be declared in the patch: `dsh-client-modules` scans the
 `package.json dsh.client` of enabled Loader entries and then takes the bundle through
 `exports["./client"]`. The Loader row id `token-usage` is also the plugin's settings
-namespace, which is what the browser half uses when it writes a refresh request.
+namespace, which is what the browser side uses when it writes a refresh request.
 
 ### Reinstall after changes
 
@@ -229,23 +229,23 @@ node scripts/verify-contract.mjs  # all passed: 261 assembly-shape assertions
 `verify-contract.mjs` is the one that earns its keep on a plugin like this, because four
 of this package's properties cannot be checked by running it:
 
-- **The two halves must agree on constants.** `client.js` cannot import `lib/constants.js`
+- **The two sides must agree on constants.** `client.js` cannot import `lib/constants.js`
   (a client bundle only gets `require`), so `PANEL_ID`, `CONFIG_NS`, `PROJECTION_KEY` and
   `TOKEN_BY_MODEL_KEY` exist twice. The script parses both sides and compares them, and
-  drives the browser half for real through a `window.__ModuleLoader__` stub.
+  drives the browser side for real through a `window.__ModuleLoader__` stub.
 - **The two `formatTokens` implementations must agree value for value.** The duplication is
-  unavoidable for the same reason. The script extracts the browser half's copy from
+  unavoidable for the same reason. The script extracts the browser side's copy from
   `__internals` and compares it against `lib/fold.js` across 16 values plus the
   `-1` / `NaN` / `Infinity` edges. A negative control that flips one threshold in either
   file makes it fail, so the comparison is not a rubber stamp.
-- **The data shape must survive the hop between the halves.** Host folds, writes
+- **The data shape must survive the hop between the sides.** Host folds, writes
   `internal.summary`, the settings service projects it, the browser reads it back. Any
   mismatch in nesting, field name or case shows up in the UI as "no data" and never as an
   error. The script writes once through the host's real store (capturing the complete raw
   config it submits), wraps that config the way `settings.describe()` returns it, hands it
-  to the browser half's real `readSummary` / `normaliseRows`, and compares both ends row by
+  to the browser side's real `readSummary` / `normaliseRows`, and compares both ends row by
   row — plus a negative control that misplaces `summary` one level up and requires the
-  browser half to find nothing.
+  browser side to find nothing.
 - **Persistence must fall back on failure, not on availability.** `mode` selects a
   preference; `persist()` tries both channels and only reports failure when both throw.
   The script proves this behaviourally with stubs — a throwing `configEditor` still ends up
@@ -257,7 +257,7 @@ documented `box-shadow` exception), no `word-break: break-all`, the root does no
 `height: 100%`, and **all hooks precede the first `return`** in both components — the rule
 whose violation blanks the whole slot with React #310.
 
-The suite covers the pure-function layer — the one both halves of the plugin rely on for
+The suite covers the pure-function layer — the one both sides of the plugin rely on for
 arithmetic:
 
 | Area | Coverage |
@@ -272,9 +272,9 @@ arithmetic:
 
 ### Real-device end-to-end (actually measured in this session on a running Host)
 
-- **Host half activated**: the plugin's Config reports `status: "schema"`. That also proves
+- **Host side activated**: the plugin's Config reports `status: "schema"`. That also proves
   that `zod` and `@deepseek-ai/schemastery` resolve inside the host process.
-- **Browser half activated**: the client seat `token-usage` is `active: true` in
+- **Browser side activated**: the client seat `token-usage` is `active: true` in
   `conversation.session.header.utilities`, listed next to the official `open-in-app` and
   `session-log-download` seats, and it displaced no official control.
 - **The projection schema is valid under the real `zod` 4.6.5**: because the host module
@@ -305,7 +305,7 @@ plugin_manager install_bundle target: file:E:\repos\dsh-plugins\dsh-plugin-token
 ```
 
 Then **restart the Host** (or re-enable that Loader entry) before the new JavaScript build is
-loaded; refreshing the page alone only gets you the new browser-half bundle. Node's ESM module
+loaded; refreshing the page alone only gets you the new browser-side bundle. Node's ESM module
 cache is keyed by resolved path, so replacing the file on disk does not replace the module
 that was already imported — a host-side change (the projection, the scan, the config schema)
 will look like "the fix did nothing" until the host is restarted.

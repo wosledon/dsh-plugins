@@ -1,5 +1,5 @@
 /**
- * lib/skill.js — 「用对话创建定时任务」的 skill 注册（宿主半）。
+ * lib/skill.js — 「用对话创建定时任务」的 skill 注册（宿主侧）。
  *
  * 约束（见 CONTRACT.md §3）：
  * - 纯 JS，**不 import 任何 @deepseek-ai/***。

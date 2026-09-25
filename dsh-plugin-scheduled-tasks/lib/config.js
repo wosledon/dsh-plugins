@@ -105,7 +105,7 @@ const logSchema = Schema.object({
  * 会让 `mutate()` 直接抛 "has no volatile fields"。
  *
  * 由于第三方插件无法新增 Remote namespace，`remote.settings` 是本插件
- * 与浏览器半之间**唯一**可用的读写通道，所以这两个节点必须可读写：
+ * 与浏览器侧之间**唯一**可用的读写通道，所以这两个节点必须可读写：
  *   - `tasks`     —— 任务定义，界面与模型工具都写它；
  *   - `internal`  —— 宿主自用的运行日志与去重表，界面只读。
  * `workspaceRoot` 等普通字段不在表单里，通过 `cordis.patch.yml` 配置。
@@ -121,7 +121,7 @@ export const Config = Schema.object({
   internal: Schema.object({
     log: Schema.array(logSchema).default([]),
     runs: Schema.any().default({}),
-    // 「立即运行」请求队列。浏览器半不能创建 Agent，所以它只能把意图写成数据，
+    // 「立即运行」请求队列。浏览器侧不能创建 Agent，所以它只能把意图写成数据，
     // 由宿主的调度器在下一次 tick 消费（见 lib/scheduler.js drainManualRuns）。
     manualRuns: Schema.array(Schema.object({
       taskId: Schema.string().required(),

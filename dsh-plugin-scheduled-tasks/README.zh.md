@@ -58,7 +58,7 @@ DSH 客户端 `ctx.remote` 的 namespace 是**编译期固定白名单**：只�
 里预先声明过的名字（`settings`、`workspaceFiles`、`llm`……）存在，
 第三方纯 JS 插件**无法新增** namespace —— 不是"没写文档"，而是根本没有注册入口。
 
-所以本插件的浏览器半完全没有自定义 Remote，只复用既有的
+所以本插件的浏览器侧完全没有自定义 Remote，只复用既有的
 `ctx.remote.settings.describe()` / `mutate(ns, ops, revision)` 作为读写通道：
 
 - 读：`describe()` 里找本插件那条，拿任务列表、日志和 `revision`；
@@ -100,7 +100,7 @@ dsh-plugin-scheduled-tasks/
 ├── lib/scheduler.js      # 定时器 + 派发 + 并发上限 + 重叠去重
 ├── lib/tools.js          # 模型工具 scheduled_task_*
 ├── lib/skill.js          # 编程式注册 scheduled-tasks skill
-├── client.js             # 浏览器半：懒工厂 + 两个 slot + 页面组件
+├── client.js             # 浏览器侧：懒工厂 + 两个 slot + 页面组件
 ├── skills/scheduled-tasks/SKILL.md   # skill 的人类可读备份
 ├── locale/{en,zh}.json   # 插件页标题与描述
 ├── icon.svg              # 面板图标（currentColor，24x24）
@@ -130,7 +130,7 @@ plugin_manager install_bundle  target: file:E:\repos\dsh-plugins\dsh-plugin-sche
       name: 'dsh-plugin-scheduled-tasks'
 ```
 
-浏览器半不需要在补丁里声明：`dsh-client-modules` 扫描已启用 Loader 条目的
+浏览器侧不需要在补丁里声明：`dsh-client-modules` 扫描已启用 Loader 条目的
 `package.json dsh.client`，再通过 `exports["./client"]` 取 bundle。
 
 ### 改动之后要重新安装
@@ -238,9 +238,9 @@ node scripts/verify-render.mjs    # 全部通过：57 项渲染与交互断言
 
 ### 真机端到端（本会话在运行中的 Host 上实测）
 
-- **宿主半激活**：`Config.listConfigs` 查到 `include:scheduled-tasks`（status `schema`）；
+- **宿主侧激活**：`Config.listConfigs` 查到 `include:scheduled-tasks`（status `schema`）；
   五个 `scheduled_task_*` 工具与 `scheduled-tasks` skill 实际出现在会话的工具/技能目录里。
-- **浏览器半激活**：客户端 slot 实况显示 `sidebar.panellist` 有活跃占位
+- **浏览器侧激活**：客户端 slot 实况显示 `sidebar.panellist` 有活跃占位
   `{ id: "scheduled-tasks", order: 20 }`，`main` 有活跃占位 `{ key: "scheduled-tasks" }`。
 - **对话创建可用**：`scheduled_task_create` 真实创建成功并回读；
   任务定义落进 profile 的 `cordis.patch.yml`（`- id: scheduled-tasks` → `config.tasks`）。
@@ -286,7 +286,7 @@ plugin_manager install_bundle target: file:E:\repos\dsh-plugins\dsh-plugin-sched
 ```
 
 然后**重启 Host**（或重新启用该 Loader 条目）才会加载新的 JavaScript 生成；
-只刷新页面只能拿到新的浏览器半 bundle。本会话在改完 runner 后实测过：
+只刷新页面只能拿到新的浏览器侧 bundle。本会话在改完 runner 后实测过：
 磁盘上的文件已更新，但同一进程内 `scheduled_task_run` 仍在跑旧代码
 （这在 Docker 式增量开发里正常，但排查时容易误判成"修了没用"）。
 

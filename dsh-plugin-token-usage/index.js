@@ -1,12 +1,12 @@
 /**
- * 「Token 用量」插件 —— 宿主半。
+ * 「Token 用量」插件 —— 宿主侧。
  *
  * 职责只有两件，都很窄：
  *   1. 注册会话投影 `tokenByModel`（按模型拆分的用量），客户端实时读它；
  *   2. 按客户端请求扫描历史会话日志，折叠出跨会话汇总写进设置，供独立页面读。
  *
  * 之所以跨会话那部分非得在宿主做：`ctx.sessionQuery` 的方法都不是 `@Remote`，
- * 浏览器半根本调不到别的会话的日志。
+ * 浏览器侧根本调不到别的会话的日志。
  */
 import { Config } from './lib/config.js';
 import { createStore } from './lib/store.js';

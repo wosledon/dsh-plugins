@@ -60,8 +60,8 @@ array does it fall back to the resolved value (`namespace.value`).
 dsh-plugin-reasoning-effort/
 ├── package.json          # dsh.bundle.patch + dsh.client declarations
 ├── cordis.patch.yml      # bundle patch: inserts one host entry line
-├── index.js              # host half: empty implementation (only the browser half has behaviour)
-├── client.js             # browser half: lazy factory + slot registration + card component
+├── index.js              # host side: empty implementation (only the browser side has behaviour)
+├── client.js             # browser side: lazy factory + slot registration + card component
 ├── icon.svg              # plugin page icon
 ├── locale/{en,zh}.json   # plugin page title and description
 ├── scripts/verify-contract.mjs   # contract self-check (for development, not installed with the package)
@@ -69,7 +69,7 @@ dsh-plugin-reasoning-effort/
 └── README.zh.md          # Chinese
 ```
 
-The host half exists only because `dsh-client-modules` scans the
+The host side exists only because `dsh-client-modules` scans the
 `package.json dsh.client` declarations of **enabled Loader entries** only; the browser
 bundle is obtained via `exports["./client"]`. Without that line, `client.js` would
 never make it into `window.__DSH_BOOT__`.
@@ -149,7 +149,7 @@ Verified:
 
 - The package and the patch manifest parse, and the `insert` line name matches the
   package name;
-- The browser half registers a lazy factory under the package name as its id, and the
+- The browser side registers a lazy factory under the package name as its id, and the
   factory returns a valid Cordis plugin object;
 - `apply()` registers **keyed** cells on `settings.models.provider-card` only, with keys
   taken from the real `settingsNs` of `remote.llm.listConfigurableProviders()`;
