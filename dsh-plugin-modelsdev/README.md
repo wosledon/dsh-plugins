@@ -188,7 +188,7 @@ stale fallback, HTTP route and every pure mapping used by the browser half:
 
 ```text
 node scripts/verify-catalog.mjs
-# verify-catalog: 100 assertions passed
+# verify-catalog: 106 assertions passed
 ```
 
 The plugin was installed into the desktop profile and verified live: the catalog

@@ -88,7 +88,7 @@ The plugin ships a self-check that runs with no third-party dependencies:
 
 ```text
 dsh-plugin-modelsdev
-  node scripts/verify-catalog.mjs      100 assertions
+  node scripts/verify-catalog.mjs      106 assertions
 ```
 
 It covers the catalog projection (model filtering, reasoning aliases, api

@@ -387,5 +387,17 @@ equal(pure.matchesQuery('Acme Large', 'large'), true, 'search is case-insensitiv
 equal(pure.matchesQuery('Acme Large', 'missing'), false, 'search rejects non-matches');
 
 /* ------------------------------------------------------------------ */
+/* 4. 按钮样式契约                                                     */
+/* ------------------------------------------------------------------ */
+
+const css = pure.CSS;
+ok(typeof css === 'string' && css.length > 1000, 'client stylesheet is exported for inspection');
+ok(!/\.mdv-btn\{[^}]*border:(?!0)/.test(css), 'buttons do not draw a border');
+ok(css.includes('.mdv-btn--primary{background:var(--dsw-alias-button-contrast-fill)'), 'primary buttons use the filled contrast style');
+ok(css.includes('.mdv-btn:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary)'), 'buttons get a branded keyboard focus ring');
+ok(css.includes('.mdv-provider{') && !/\.mdv-provider\{[^}]*border:[^0]/.test(css), 'provider rows stay borderless');
+ok(!css.includes('border:.5px solid var(--dsw-alias-brand-primary)'), 'no control uses the near-black brand color as a border');
+
+/* ------------------------------------------------------------------ */
 
 console.log('verify-catalog: ' + checks + ' assertions passed');

@@ -76,7 +76,7 @@ plugin_manager install_bundle   target: file:E:\repos\dsh-plugins\dsh-plugin-mod
 
 ```text
 dsh-plugin-modelsdev
-  node scripts/verify-catalog.mjs      100 条断言
+  node scripts/verify-catalog.mjs      106 条断言
 ```
 
 覆盖目录投影（模型过滤、推理等级别名、api 归一化）、缓存过期 / 强制刷新 / 旧缓存
