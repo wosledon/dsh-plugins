@@ -166,7 +166,7 @@ plugin_manager install_bundle   target: file:E:\repos\dsh-plugins\dsh-plugin-mod
 
 ```text
 node scripts/verify-catalog.mjs
-# verify-catalog: 106 assertions passed
+# verify-catalog: 107 assertions passed
 ```
 
 插件已安装进 desktop profile 并做过在线验证：目录路由返回 233 个供应商 /

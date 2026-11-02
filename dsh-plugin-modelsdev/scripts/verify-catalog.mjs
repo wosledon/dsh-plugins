@@ -392,8 +392,9 @@ equal(pure.matchesQuery('Acme Large', 'missing'), false, 'search rejects non-mat
 
 const css = pure.CSS;
 ok(typeof css === 'string' && css.length > 1000, 'client stylesheet is exported for inspection');
-ok(!/\.mdv-btn\{[^}]*border:(?!0)/.test(css), 'buttons do not draw a border');
-ok(css.includes('.mdv-btn--primary{background:var(--dsw-alias-button-contrast-fill)'), 'primary buttons use the filled contrast style');
+ok(css.includes('.mdv-btn{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;min-height:30px;border:.5px solid var(--dsw-alias-border-l3)'), 'buttons use the host secondary border');
+ok(!css.includes('--dsw-alias-button-contrast-fill') && !css.includes('--dsw-alias-button-primary-fill'), 'buttons have no dark filled variant');
+ok(css.includes('.mdv-btn--primary{border-color:var(--dsw-alias-border-l4);font-weight:500}'), 'primary buttons only strengthen the border');
 ok(css.includes('.mdv-btn:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary)'), 'buttons get a branded keyboard focus ring');
 ok(css.includes('.mdv-provider{') && !/\.mdv-provider\{[^}]*border:[^0]/.test(css), 'provider rows stay borderless');
 ok(!css.includes('border:.5px solid var(--dsw-alias-brand-primary)'), 'no control uses the near-black brand color as a border');
