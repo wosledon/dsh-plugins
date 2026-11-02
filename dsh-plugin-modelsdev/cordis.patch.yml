@@ -1,0 +1,13 @@
+# models.dev 目录 bundle 的补丁层。
+#
+# 只插入一行宿主条目。浏览器半不由补丁声明：`dsh-client-modules` 扫描
+# 已启用 Loader 条目的 package.json `dsh.client` 声明，并通过
+# `exports["./client"]` 取得浏览器 bundle，所以 client.js 会自动进入
+# window.__DSH_BOOT__。
+#
+# 宿主条目注册一条只读 HTTP 路由 `/plugin-modelsdev/catalog`：
+# 它从 models.dev 取一次目录、缓存、投影成紧凑 JSON，供设置页的浏览器半读取。
+# 行 id 在 profile 内必须唯一。
+- insert:
+    - id: modelsdev
+      name: 'dsh-plugin-modelsdev'

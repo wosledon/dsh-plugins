@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="models.dev catalog">
+  <defs>
+    <linearGradient id="modelsdev-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2f6df6"/>
+      <stop offset="1" stop-color="#12b886"/>
+    </linearGradient>
+  </defs>
+  <rect x="3" y="3" width="58" height="58" rx="14" fill="url(#modelsdev-bg)"/>
+  <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17 44V27l9 8 9-8v17" stroke-width="4.5"/>
+    <path d="M39 46h10" stroke-width="3" opacity=".85"/>
+    <path d="M39 39h10" stroke-width="3" opacity=".85"/>
+    <path d="M39 32h6" stroke-width="3" opacity=".85"/>
+  </g>
+  <circle cx="49.5" cy="18.5" r="5" fill="#ffffff" opacity=".9"/>
+</svg>
