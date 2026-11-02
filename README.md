@@ -15,6 +15,7 @@ host side is ordinary ESM.
 | Plugin | What it does | Host side | Browser side |
 | --- | --- | --- | --- |
 | [`dsh-plugin-modelsdev`](dsh-plugin-modelsdev/README.md) | Browse the models.dev provider/model catalog inside Settings → Models and import a provider plus its models as a working `llm-pi-ai` route | yes (cached catalog HTTP route) | yes (footer section + importer) |
+| [`dsh-plugin-remote-dsh`](dsh-plugin-remote-dsh/README.md) | Turn an SSH host into a remote DSH Web workspace: probe, install the official CLI, start `dsh web`, tunnel it, and open it in the right sidebar | yes (SSH config, install/start/tunnel, local API) | yes (left-sidebar menu + host manager) |
 
 ### dsh-plugin-modelsdev
 
@@ -44,6 +45,35 @@ the adapter appends `/v1/messages`; `none` reasoning is mapped to `off`, while
 
 See the [plugin README](dsh-plugin-modelsdev/README.md) for the full mapping
 table, the exact settings shape, and limitations.
+
+### dsh-plugin-remote-dsh
+
+The remote counterpart: a left-sidebar **Remote DSH** menu that reads
+`~/.ssh/config` (via `ssh -G`) and lets you add remotes manually. For each host:
+
+- **Probe** `node` / `npm` / `npx` / `dsh` and the npm global prefix.
+- **Start** the remote Web profile with the official command — default
+  `npx -y @deepseek-ai/dsh@latest web --host 127.0.0.1 --port <p> --no-open`, or
+  global mode after `npm install -g --prefix ~/.npm-global @deepseek-ai/dsh@latest`.
+  A registry field (default npmmirror) keeps a broken remote `.npmrc` from hanging
+  the start.
+- The Host opens an SSH tunnel on the same port, parses the
+  `dsh web: <url>?token=…` line, and returns a local URL. Starting does not
+  switch panels or open a window.
+- Running cards have a single **Browser** button; starting never switches panels
+  or opens a window.
+- The right Sidebar is per Session, so a session-header **Remote DSH** button
+  (and a right-Sidebar guide entry) opens a launcher tab. Each running remote is
+  one click target there: it opens directly as a Browser tab in the current
+  Session.
+
+The remote Web never binds beyond loopback; the SSH local forward carries the
+traffic, so the two machines do not need to share a LAN. Any SSH-reachable target
+works, and `ProxyJump` / `ProxyCommand` from `~/.ssh/config` (or the manual
+host's Proxy jump field) is honored. Local and remote sessions are intentionally
+separate. See the
+[plugin README](dsh-plugin-remote-dsh/README.md) for modes, security, and
+limitations.
 
 ## Install
 
@@ -89,21 +119,42 @@ The plugin ships a self-check that runs with no third-party dependencies:
 ```text
 dsh-plugin-modelsdev
   node scripts/verify-catalog.mjs      107 assertions
+
+dsh-plugin-remote-dsh
+  node scripts/verify-contract.mjs      80 assertions
 ```
 
-It covers the catalog projection (model filtering, reasoning aliases, api
-normalization), cache expiry / forced refresh / stale fallback, concurrent
-fetches, the HTTP route's 200/404/405/502 responses, and every pure mapping used
-by the browser half (protocol inference, endpoint normalization, credential
-references, model profiles, import validation).
+`verify-catalog.mjs` covers the catalog projection (model filtering, reasoning
+aliases, api normalization), cache expiry / forced refresh / stale fallback,
+concurrent fetches, the HTTP route's 200/404/405/502 responses, and every pure
+mapping used by the browser half (protocol inference, endpoint normalization,
+credential references, model profiles, import validation).
+
+`verify-contract.mjs` covers ssh-config parsing / `ssh -G`, SSH argument
+construction, log URL extraction, probe parsing, manual-host validation, the
+state file, the token-protected API, a fake-SSH start/open/stop flow, and the
+remote page's style contract.
 
 Live checks performed against the desktop profile:
 
 - `GET /plugin-modelsdev/catalog` → 200, 233 providers, 7,619 chat models,
   1.09 MB in 1.46 s on the first fetch.
 - `settings.models.footer` → `modelsdev-catalog` occupant, active.
+- `GET /plugin-remote-dsh/api/bootstrap` → 200 with a token; `GET
+  /plugin-remote-dsh/api/hosts` → 4 hosts from `~/.ssh/config`, no config
+  errors; without the token → 401.
+- `sidebar.panellist` and `main` both report the `remote-dsh` occupant as
+  active.
+- A real remote start through the plugin worked in both modes (npx + npmmirror,
+  and a global install into `~/.npm-global`): the remote URL came back, the local
+  SSH tunnel served `DeepSeek Harness` (HTTP 200), and stop cleaned up.
+- A port conflict returned `PORT_IN_USE` with the listener PID without touching
+  its log; an explicit force restart replaced the existing `dsh web` and served
+  the new URL through the tunnel.
+- With one remote already tunneled on local 3080, starting another remote
+  auto-selected 3081 on both sides; both URLs served `DeepSeek Harness`.
 
-The rendered section needs the authenticated Harness page; this development
+The rendered sections need the authenticated Harness page; this development
 environment could not attach to that page, so no screenshot is recorded and
 visual verification remains unavailable.
 
@@ -119,6 +170,20 @@ dsh-plugin-modelsdev/
   cordis.patch.yml      Bundle patch (one Loader row)
   locale/{en,zh}.json   Inventory title/description
   icon.svg              Original artwork
+  README.md / README.zh.md
+
+dsh-plugin-remote-dsh/
+  index.js              Host entry: API route + tunnel lifecycle
+  lib/ssh-config.js     ~/.ssh/config + ssh -G + command builders
+  lib/state.js          state.json store and manual-host model
+  lib/remote.js         probe / install / start / stop / open / logs
+  lib/server.js         Token-protected local API
+  client.js             Sidebar icon + Remote DSH page
+  scripts/
+    verify-contract.mjs Zero-dependency self-check
+  cordis.patch.yml
+  locale/{en,zh}.json
+  icon.svg
   README.md / README.zh.md
 ```
 

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Remote DSH hosts">
+  <defs>
+    <linearGradient id="remote-dsh-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2f6df6"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <rect x="3" y="3" width="58" height="58" rx="14" fill="url(#remote-dsh-bg)"/>
+  <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="14" y="16" width="36" height="22" rx="4" stroke-width="3"/>
+    <path d="M24 46h16M32 38v8" stroke-width="3"/>
+    <path d="M22 27l5 4-5 4M31 35h8" stroke-width="3"/>
+  </g>
+  <circle cx="49" cy="15" r="6" fill="#ffffff" opacity=".9"/>
+  <path d="M46.5 15h5M49 12.5v5" stroke="#2f6df6" stroke-width="1.6" stroke-linecap="round"/>
+</svg>

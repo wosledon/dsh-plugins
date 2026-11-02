@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "远程 DSH 主机",
+    "description": "读取 SSH 主机，在远端全局安装官方 DSH CLI，启动远端 Web profile，并在侧栏中打开。"
+  }
+}

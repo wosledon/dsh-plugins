@@ -1,0 +1,10 @@
+# 「远程 DSH」bundle 的补丁层。
+#
+# 只插入一行宿主条目。浏览器半由 dsh-client-modules 扫描 package.json 的
+# `dsh.client` 声明加载；宿主条目注册 `/plugin-remote-dsh/api/*`，
+# 负责读取 ~/.ssh/config、在远端全局安装/启动官方 dsh web，并维护本地 SSH 隧道。
+#
+# 行 id 在 profile 内必须唯一。
+- insert:
+    - id: remote-dsh
+      name: 'dsh-plugin-remote-dsh'

@@ -14,6 +14,7 @@
 | 插件 | 功能 | 宿主侧 | 浏览器侧 |
 | --- | --- | --- | --- |
 | [`dsh-plugin-modelsdev`](dsh-plugin-modelsdev/README.zh.md) | 在“设置 → 模型”里浏览 models.dev 供应商/模型目录，把供应商及其模型导入成可用的 `llm-pi-ai` 路由 | 有（带缓存的目录 HTTP 路由） | 有（页脚区块 + 导入器） |
+| [`dsh-plugin-remote-dsh`](dsh-plugin-remote-dsh/README.zh.md) | 把 SSH 主机变成远程 DSH Web 工作区：探活、安装官方 CLI、启动 `dsh web`、建隧道，并在右侧栏打开 | 有（SSH 配置、安装/启动/隧道、本地 API） | 有（左侧菜单 + 主机管理页） |
 
 ### dsh-plugin-modelsdev
 
@@ -37,6 +38,27 @@ models.dev 为 235 个供应商、约 9 千个模型提供端点、凭据变量�
 的等级映射。
 
 完整映射表、写入形状和限制见[插件 README](dsh-plugin-modelsdev/README.zh.md)。
+
+### dsh-plugin-remote-dsh
+
+远端版本：左侧栏一个 **远程 DSH** 菜单，读取 `~/.ssh/config`（通过 `ssh -G`），
+也支持手动添加远端。每台主机可以：
+
+- **探活** `node` / `npm` / `npx` / `dsh` 和 npm 全局前缀；
+- **启动** 远端 Web profile：默认
+  `npx -y @deepseek-ai/dsh@latest web --host 127.0.0.1 --port <p> --no-open`，
+  或切到 global 模式，先 `npm install -g --prefix ~/.npm-global @deepseek-ai/dsh@latest`。
+  registry 默认 npmmirror，可以避免远端不可达的 `.npmrc` 把启动拖到超时。
+- 宿主建同端口 SSH 隧道，解析 `dsh web: <url>?token=…`，返回本地 URL；启动不会
+  自动切面板或弹窗；
+- 运行中的卡片只有一个 **浏览器** 按钮；启动不会切面板或弹窗；
+- 右侧栏按 Session，所以会话头部的 **远程 DSH** 按钮（以及右侧栏引导入口）会打开
+  启动器 tab；每台运行中的远端整行可点，直接在当前 Session 的 Browser tab 打开。
+
+远端 Web 只绑 loopback，流量走 SSH 本地转发，因此**不要求同一局域网**：只要本地
+能 `ssh <target>`，公网 IP、DDNS、Tailscale 或跳板机后的主机都可以；ssh-config 的
+`ProxyJump` / `ProxyCommand`，以及手动主机的 Proxy jump 字段都会生效。本地和远端
+仍是两套 session。模式、安全和限制见[插件 README](dsh-plugin-remote-dsh/README.zh.md)。
 
 ## 安装
 
@@ -77,17 +99,35 @@ plugin_manager install_bundle   target: file:E:\repos\dsh-plugins\dsh-plugin-mod
 ```text
 dsh-plugin-modelsdev
   node scripts/verify-catalog.mjs      107 条断言
+
+dsh-plugin-remote-dsh
+  node scripts/verify-contract.mjs      80 条断言
 ```
 
-覆盖目录投影（模型过滤、推理等级别名、api 归一化）、缓存过期 / 强制刷新 / 旧缓存
-回退、并发抓取、HTTP 路由的 200/404/405/502 响应，以及浏览器半的全部纯映射
-（协议推断、端点归一化、凭据引用、模型 profile、导入校验）。
+`verify-catalog.mjs` 覆盖目录投影（模型过滤、推理等级别名、api 归一化）、缓存过期 /
+强制刷新 / 旧缓存回退、并发抓取、HTTP 路由的 200/404/405/502 响应，以及浏览器半的
+全部纯映射（协议推断、端点归一化、凭据引用、模型 profile、导入校验）。
+
+`verify-contract.mjs` 覆盖 ssh-config 解析 / `ssh -G`、SSH 参数构造、日志 URL
+提取、探活解析、手动主机校验、状态文件、token 保护的 API、假 SSH 的
+start/open/stop 流程，以及远程页面的样式契约。
 
 针对 desktop profile 做过的在线检查：
 
 - `GET /plugin-modelsdev/catalog` → 200，233 个供应商、7,619 个对话模型，
   首次抓取 1.09 MB / 1.46 秒。
 - `settings.models.footer` → `modelsdev-catalog` 占用者，active。
+- `GET /plugin-remote-dsh/api/bootstrap` → 200，返回 token；
+  `GET /plugin-remote-dsh/api/hosts` → 4 台来自 `~/.ssh/config` 的主机，无配置
+  错误；不带 token → 401。
+- `sidebar.panellist` 与 `main` 都报告 `remote-dsh` 占用者 active。
+- 通过插件真实启动测试主机，npx（npmmirror）和 global（安装到 `~/.npm-global`）
+  两种模式都成功：返回远端 URL，本地 SSH 隧道返回 `DeepSeek Harness`（HTTP 200），
+  停止后清理。
+- 端口冲突返回 `PORT_IN_USE` 和监听 PID，未截断日志；显式 force 重启替换了已有
+  `dsh web`，新 URL 通过隧道返回。
+- 一台远端已占用本地 3080 时，启动另一台远端自动在两边改用 3081；两个 URL 都能
+  返回 `DeepSeek Harness`。
 
 渲染后的区块需要已认证的 Harness 页面；本开发环境无法附加到该页面，因此没有记录
 截图，目视验证仍不可用。
@@ -104,6 +144,20 @@ dsh-plugin-modelsdev/
   cordis.patch.yml      bundle 补丁（一行 Loader 条目）
   locale/{en,zh}.json   插件清单标题/描述
   icon.svg              原创图标
+  README.md / README.zh.md
+
+dsh-plugin-remote-dsh/
+  index.js              宿主入口：API 路由 + 隧道生命周期
+  lib/ssh-config.js     ~/.ssh/config + ssh -G + 命令构造
+  lib/state.js          state.json 存储与手动主机模型
+  lib/remote.js         probe / install / start / stop / open / logs
+  lib/server.js         token 保护的本地 API
+  client.js             侧栏图标 + 远程 DSH 页面
+  scripts/
+    verify-contract.mjs 零依赖自检
+  cordis.patch.yml
+  locale/{en,zh}.json
+  icon.svg
   README.md / README.zh.md
 ```
 

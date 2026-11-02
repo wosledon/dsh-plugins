@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Remote DSH hosts",
+    "description": "Read SSH hosts, install the official DSH CLI globally on a remote machine, start its Web profile, and open it in the sidebar."
+  }
+}

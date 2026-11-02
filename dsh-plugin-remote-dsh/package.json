@@ -1,0 +1,35 @@
+{
+  "name": "dsh-plugin-remote-dsh",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Remote DSH hosts: read ~/.ssh/config, install the official DSH CLI globally on a remote machine, start its Web profile, tunnel it locally, and open it in the DSH sidebar.",
+  "type": "module",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/**/*.js",
+    "scripts/**/*.mjs",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
+    "README.md",
+    "README.zh.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}
