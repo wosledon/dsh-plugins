@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Copilot configuration",
+    "description": "Read the project's .github Copilot instructions, prompts, and chat modes; expose them to the agent and open their file links in the sidebar."
+  }
+}

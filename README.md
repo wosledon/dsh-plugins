@@ -16,6 +16,7 @@ host side is ordinary ESM.
 | --- | --- | --- | --- |
 | [`dsh-plugin-modelsdev`](dsh-plugin-modelsdev/README.md) | Browse the models.dev provider/model catalog inside Settings → Models and import a provider plus its models as a working `llm-pi-ai` route | yes (cached catalog HTTP route) | yes (footer section + importer) |
 | [`dsh-plugin-remote-dsh`](dsh-plugin-remote-dsh/README.md) | Turn an SSH host into a remote DSH Web workspace: probe, install the official CLI, start `dsh web`, tunnel it, and open it in the right sidebar | yes (SSH config, install/start/tunnel, local API) | yes (left-sidebar menu + host manager) |
+| [`dsh-plugin-copilot-config`](dsh-plugin-copilot-config/README.md) | Read the GitHub Copilot configuration a project keeps under `.github/` (repository instructions, path-scoped instructions, prompts, chat modes, custom agents), expose it to the agent as a tool and prompt context, and open its file links in the sidebar | yes (`ctx.fs` scanner, tool, prompt sections, local API) | yes (left-sidebar panel + configuration page with file links) |
 
 ### dsh-plugin-modelsdev
 
@@ -75,6 +76,27 @@ separate. See the
 [plugin README](dsh-plugin-remote-dsh/README.md) for modes, security, and
 limitations.
 
+### dsh-plugin-copilot-config
+
+The project's own style guide, read where it already lives. VS Code Copilot
+reads `.github/copilot-instructions.md`, `.github/instructions/**/*.instructions.md`
+(with `applyTo` globs), `.github/prompts/*.prompt.md`, `.github/chatmodes/*.chatmode.md`
+and `.github/agents/*.agent.md`; this plugin reads the same set through `ctx.fs`
+and gives it to three readers:
+
+- the agent, through a `copilot_config` tool (`list` / `read`) and a per-Session
+  prompt section built from the project's instructions plus an index of the rest;
+- you, through a left-sidebar panel that renders one file at a time;
+- the right sidebar, because every relative markdown link is resolved against its
+  file and opened as a `dsh-resource://file/session/<id>/<path>` address — the
+  same Document preview the Files tab uses.
+
+The scan is bounded (300 files, depth 4, 256 KiB per file) and read-only: a
+project without `.github` is a normal empty state, and `AGENTS.md` stays with
+`dsh-agent-instructions`. See the
+[plugin README](dsh-plugin-copilot-config/README.md) for the file table,
+prompt shape, and limitations.
+
 ## Install
 
 Install a plugin into the current DSH profile by pointing `plugin_manager` at the
@@ -122,6 +144,9 @@ dsh-plugin-modelsdev
 
 dsh-plugin-remote-dsh
   node scripts/verify-contract.mjs      80 assertions
+
+dsh-plugin-copilot-config
+  node scripts/verify-contract.mjs     150 assertions
 ```
 
 `verify-catalog.mjs` covers the catalog projection (model filtering, reasoning
@@ -130,10 +155,17 @@ concurrent fetches, the HTTP route's 200/404/405/502 responses, and every pure
 mapping used by the browser half (protocol inference, endpoint normalization,
 credential references, model profiles, import validation).
 
-`verify-contract.mjs` covers ssh-config parsing / `ssh -G`, SSH argument
-construction, log URL extraction, probe parsing, manual-host validation, the
-state file, the token-protected API, a fake-SSH start/open/stop flow, and the
-remote page's style contract.
+The remote-dsh `verify-contract.mjs` covers ssh-config parsing / `ssh -G`, SSH
+argument construction, log URL extraction, probe parsing, manual-host
+validation, the state file, the token-protected API, a fake-SSH start/open/stop
+flow, and the remote page's style contract.
+
+The copilot-config `verify-contract.mjs` covers classification, frontmatter,
+title derivation, link resolution and `dsh-resource://` addresses, the markdown
+block/inline parser (including code fences), the scanner against an in-memory
+filesystem, the HTTP API's token and route contract, the tool's
+parameters/output/execute, the Host wiring through a fake context, and the
+Client module's static contract.
 
 Live checks performed against the desktop profile:
 
@@ -153,6 +185,13 @@ Live checks performed against the desktop profile:
   the new URL through the tunnel.
 - With one remote already tunneled on local 3080, starting another remote
   auto-selected 3081 on both sides; both URLs served `DeepSeek Harness`.
+- `GET /plugin-copilot-config/api/bootstrap` → 200 with a token; without the
+  token → 401. With a real Session whose workspace carried a `.github` fixture,
+  `config` reported `present: true` with both files classified and `applyTo`
+  parsed, and `file` returned blocks plus two resolved links with sidebar
+  addresses (the link inside the code fence was excluded). The fixture was
+  removed afterwards.
+- `Tool.listTools` shows `copilot_config` with the documented parameters.
 
 The rendered sections need the authenticated Harness page; this development
 environment could not attach to that page, so no screenshot is recorded and
@@ -179,6 +218,20 @@ dsh-plugin-remote-dsh/
   lib/remote.js         probe / install / start / stop / open / logs
   lib/server.js         Token-protected local API
   client.js             Sidebar icon + Remote DSH page
+  scripts/
+    verify-contract.mjs Zero-dependency self-check
+  cordis.patch.yml
+  locale/{en,zh}.json
+  icon.svg
+  README.md / README.zh.md
+
+dsh-plugin-copilot-config/
+  index.js              Host entry: tool, prompt sections, API route
+  lib/copilot.js        Classification, frontmatter, markdown, links, addresses
+  lib/scan.js           ctx.fs scanner and prompt rendering
+  lib/server.js         Token-protected local API
+  lib/tool.js           The copilot_config tool definition
+  client.js             Sidebar panel + configuration page with file links
   scripts/
     verify-contract.mjs Zero-dependency self-check
   cordis.patch.yml

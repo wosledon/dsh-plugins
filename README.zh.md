@@ -15,6 +15,7 @@
 | --- | --- | --- | --- |
 | [`dsh-plugin-modelsdev`](dsh-plugin-modelsdev/README.zh.md) | 在“设置 → 模型”里浏览 models.dev 供应商/模型目录，把供应商及其模型导入成可用的 `llm-pi-ai` 路由 | 有（带缓存的目录 HTTP 路由） | 有（页脚区块 + 导入器） |
 | [`dsh-plugin-remote-dsh`](dsh-plugin-remote-dsh/README.zh.md) | 把 SSH 主机变成远程 DSH Web 工作区：探活、安装官方 CLI、启动 `dsh web`、建隧道，并在右侧栏打开 | 有（SSH 配置、安装/启动/隧道、本地 API） | 有（左侧菜单 + 主机管理页） |
+| [`dsh-plugin-copilot-config`](dsh-plugin-copilot-config/README.zh.md) | 读取项目 `.github/` 下的 Copilot 配置（仓库指令、路径指令、提示词、聊天模式、自定义代理），提供给 agent 并在侧栏打开文件链接 | 有（`ctx.fs` scanner、工具、提示词段、本地 API） | 有（左侧面板 + 配置页与文件链接） |
 
 ### dsh-plugin-modelsdev
 
@@ -60,6 +61,25 @@ models.dev 为 235 个供应商、约 9 千个模型提供端点、凭据变量�
 `ProxyJump` / `ProxyCommand`，以及手动主机的 Proxy jump 字段都会生效。本地和远端
 仍是两套 session。模式、安全和限制见[插件 README](dsh-plugin-remote-dsh/README.zh.md)。
 
+### dsh-plugin-copilot-config
+
+项目自己的风格规范，就读它本来所在的位置。VS Code Copilot 会读
+`.github/copilot-instructions.md`、`.github/instructions/**/*.instructions.md`
+（带 `applyTo` glob）、`.github/prompts/*.prompt.md`、
+`.github/chatmodes/*.chatmode.md` 和 `.github/agents/*.agent.md`；本插件通过
+`ctx.fs` 读同一批文件，交给三个读者：
+
+- agent：`copilot_config` 工具（`list` / `read`），以及按 Session 注入的提示词段
+  （项目指令 + 其余文件索引）；
+- 你：左侧栏面板，一次渲染一个文件；
+- 右侧栏：每个相对 markdown 链接都相对于所在文件解析，作为
+  `dsh-resource://file/session/<id>/<path>` 地址打开——和 Files tab 用的是同一个
+  Document preview。
+
+扫描有硬上限（300 个文件、深度 4、单文件 256 KiB）且只读：没有 `.github` 就是
+正常的空状态，`AGENTS.md` 仍归 `dsh-agent-instructions` 管。文件表、提示词形状
+和限制见[插件 README](dsh-plugin-copilot-config/README.zh.md)。
+
 ## 安装
 
 把 `plugin_manager` 指向包目录即可安装进当前 DSH profile：
@@ -102,15 +122,23 @@ dsh-plugin-modelsdev
 
 dsh-plugin-remote-dsh
   node scripts/verify-contract.mjs      80 条断言
+
+dsh-plugin-copilot-config
+  node scripts/verify-contract.mjs     150 条断言
 ```
 
 `verify-catalog.mjs` 覆盖目录投影（模型过滤、推理等级别名、api 归一化）、缓存过期 /
 强制刷新 / 旧缓存回退、并发抓取、HTTP 路由的 200/404/405/502 响应，以及浏览器半的
 全部纯映射（协议推断、端点归一化、凭据引用、模型 profile、导入校验）。
 
-`verify-contract.mjs` 覆盖 ssh-config 解析 / `ssh -G`、SSH 参数构造、日志 URL
-提取、探活解析、手动主机校验、状态文件、token 保护的 API、假 SSH 的
+remote-dsh 的 `verify-contract.mjs` 覆盖 ssh-config 解析 / `ssh -G`、SSH 参数构造、
+日志 URL 提取、探活解析、手动主机校验、状态文件、token 保护的 API、假 SSH 的
 start/open/stop 流程，以及远程页面的样式契约。
+
+copilot-config 的 `verify-contract.mjs` 覆盖分类、frontmatter、标题推导、链接解析与
+`dsh-resource://` 地址、markdown 块/行内解析（含代码块）、内存文件系统上的 scanner、
+HTTP API 的 token 与路由契约、工具的参数/输出/执行、通过假上下文的宿主接线，以及
+客户端模块的静态契约。
 
 针对 desktop profile 做过的在线检查：
 
@@ -128,6 +156,11 @@ start/open/stop 流程，以及远程页面的样式契约。
   `dsh web`，新 URL 通过隧道返回。
 - 一台远端已占用本地 3080 时，启动另一台远端自动在两边改用 3081；两个 URL 都能
   返回 `DeepSeek Harness`。
+- `GET /plugin-copilot-config/api/bootstrap` → 200 返回 token；不带 token → 401。
+  用一个带 `.github` 夹具的真实 Session：`config` 报告 `present: true`，两个文件
+  分类正确、`applyTo` 解析正确；`file` 返回块和两个已解析链接（含右侧栏地址），
+  代码块里的链接被正确排除。验证后已删除夹具。
+- `Tool.listTools` 里能看到 `copilot_config` 及其参数。
 
 渲染后的区块需要已认证的 Harness 页面；本开发环境无法附加到该页面，因此没有记录
 截图，目视验证仍不可用。
@@ -153,6 +186,20 @@ dsh-plugin-remote-dsh/
   lib/remote.js         probe / install / start / stop / open / logs
   lib/server.js         token 保护的本地 API
   client.js             侧栏图标 + 远程 DSH 页面
+  scripts/
+    verify-contract.mjs 零依赖自检
+  cordis.patch.yml
+  locale/{en,zh}.json
+  icon.svg
+  README.md / README.zh.md
+
+dsh-plugin-copilot-config/
+  index.js              宿主入口：工具、提示词段、API 路由
+  lib/copilot.js        分类、frontmatter、markdown、链接、地址
+  lib/scan.js           ctx.fs scanner 与提示词渲染
+  lib/server.js         token 保护的本地 API
+  lib/tool.js           copilot_config 工具定义
+  client.js             侧栏面板 + 配置页与文件链接
   scripts/
     verify-contract.mjs 零依赖自检
   cordis.patch.yml

@@ -1,0 +1,11 @@
+# 「Copilot 配置」bundle 的补丁层。
+#
+# 只插入一行宿主条目。浏览器半由 dsh-client-modules 扫描 package.json 的
+# `dsh.client` 声明加载；宿主条目注册 `/plugin-copilot-config/api/*`，
+# 通过 ctx.fs 读取项目 `.github/` 下的 Copilot 配置，并向 agent 提供
+# `copilot_config` 工具与按 Session 注入的提示词段。
+#
+# 行 id 在 profile 内必须唯一。
+- insert:
+    - id: copilot-config
+      name: 'dsh-plugin-copilot-config'
