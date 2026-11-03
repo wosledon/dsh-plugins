@@ -16,7 +16,7 @@ host side is ordinary ESM.
 | --- | --- | --- | --- |
 | [`dsh-plugin-modelsdev`](dsh-plugin-modelsdev/README.md) | Browse the models.dev provider/model catalog inside Settings → Models and import a provider plus its models as a working `llm-pi-ai` route | yes (cached catalog HTTP route) | yes (footer section + importer) |
 | [`dsh-plugin-remote-dsh`](dsh-plugin-remote-dsh/README.md) | Turn an SSH host into a remote DSH Web workspace: probe, install the official CLI, start `dsh web`, tunnel it, and open it in the right sidebar | yes (SSH config, install/start/tunnel, local API) | yes (left-sidebar menu + host manager) |
-| [`dsh-plugin-copilot-config`](dsh-plugin-copilot-config/README.md) | Read the GitHub Copilot configuration a project keeps under `.github/` (repository instructions, path-scoped instructions, prompts, chat modes, custom agents), expose it to the agent as a tool and prompt context, and open its file links in the sidebar | yes (`ctx.fs` scanner, tool, prompt sections, local API) | yes (left-sidebar panel + configuration page with file links) |
+| [`dsh-plugin-copilot-config`](dsh-plugin-copilot-config/README.md) | Read the GitHub Copilot configuration a project keeps under `.github/` (repository instructions, path-scoped instructions, prompts, Agent Skills, chat modes, custom agents), expose it to the agent as a tool and prompt context, bring the invocable entries into a conversation with `/`, and open its file links in the sidebar | yes (`ctx.fs` scanner, tool, prompt sections, local API) | yes (right-sidebar tab with file links, `/` reference source) |
 
 ### dsh-plugin-modelsdev
 
@@ -80,16 +80,22 @@ limitations.
 
 The project's own style guide, read where it already lives. VS Code Copilot
 reads `.github/copilot-instructions.md`, `.github/instructions/**/*.instructions.md`
-(with `applyTo` globs), `.github/prompts/*.prompt.md`, `.github/chatmodes/*.chatmode.md`
-and `.github/agents/*.agent.md`; this plugin reads the same set through `ctx.fs`
-and gives it to three readers:
+(with `applyTo` globs), `.github/prompts/*.prompt.md`, `.github/skills/*/SKILL.md`,
+`.github/chatmodes/*.chatmode.md` and `.github/agents/*.agent.md`; this plugin
+reads the same set through `ctx.fs` and gives it to four readers:
 
 - the agent, through a `copilot_config` tool (`list` / `read`) and a per-Session
-  prompt section built from the project's instructions plus an index of the rest;
-- you, through a left-sidebar panel that renders one file at a time;
+  prompt section built from the project's instructions plus an index of the rest
+  and of the entries invocable with `/`;
+- you, through a right-sidebar tab that renders one file at a time — opened from
+  the panel's guide or the `copilot-config.open` shortcut, with no left-sidebar
+  menu row;
 - the right sidebar, because every relative markdown link is resolved against its
   file and opened as a `dsh-resource://file/session/<id>/<path>` address — the
-  same Document preview the Files tab uses.
+  same Document preview the Files tab uses;
+- the composer: typing `/` lists the project's Copilot skills (prompt files and
+  Agent Skills) and Copilot agents (chat modes and custom agents), and a pick
+  inserts a chip that expands into the file's own content on send.
 
 The scan is bounded (300 files, depth 4, 256 KiB per file) and read-only: a
 project without `.github` is a normal empty state, and `AGENTS.md` stays with
@@ -160,12 +166,16 @@ argument construction, log URL extraction, probe parsing, manual-host
 validation, the state file, the token-protected API, a fake-SSH start/open/stop
 flow, and the remote page's style contract.
 
-The copilot-config `verify-contract.mjs` covers classification, frontmatter,
-title derivation, link resolution and `dsh-resource://` addresses, the markdown
-block/inline parser (including code fences), the scanner against an in-memory
-filesystem, the HTTP API's token and route contract, the tool's
+The copilot-config `verify-contract.mjs` covers classification (including Agent
+Skills and their payload folders), frontmatter, title and invocation-name
+derivation, the reference block builder, link resolution and `dsh-resource://`
+addresses, the markdown block/inline parser (including code fences), the scanner
+and its invocable catalog against an in-memory filesystem, the HTTP API's token
+and route contract (including `catalog`), the tool's
 parameters/output/execute, the Host wiring through a fake context, and the
-Client module's static contract.
+Client module — its static contract, its pure reference helpers, its `/` source
+against both a stubbed API and the real one, the reference rule against blocks
+the Host builds, and the runtime wiring through a fake context.
 
 Live checks performed against the desktop profile:
 
@@ -227,11 +237,11 @@ dsh-plugin-remote-dsh/
 
 dsh-plugin-copilot-config/
   index.js              Host entry: tool, prompt sections, API route
-  lib/copilot.js        Classification, frontmatter, markdown, links, addresses
-  lib/scan.js           ctx.fs scanner and prompt rendering
+  lib/copilot.js        Classification, frontmatter, markdown, links, addresses, reference blocks
+  lib/scan.js           ctx.fs scanner, invocable catalog, prompt rendering
   lib/server.js         Token-protected local API
   lib/tool.js           The copilot_config tool definition
-  client.js             Sidebar panel + configuration page with file links
+  client.js             Right-sidebar tab with file links, `/` references
   scripts/
     verify-contract.mjs Zero-dependency self-check
   cordis.patch.yml

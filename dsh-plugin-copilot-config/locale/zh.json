@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Copilot 配置",
-    "description": "读取项目 .github 下的 Copilot 指令、提示词与聊天模式，提供给 agent，并在侧栏打开其中的文件链接。"
+    "description": "读取项目 .github 下的 Copilot 指令、提示词、代理技能、聊天模式与自定义代理，提供给 agent，在对话里用 / 引入，并在侧栏打开其中的文件链接。"
   }
 }

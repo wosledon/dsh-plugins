@@ -90,6 +90,16 @@ export function createCopilotApi(options) {
         });
         return;
       }
+      if (route === 'catalog' && method === 'GET') {
+        const session = new URL(req.url ?? '/', 'http://copilot-config.local').searchParams.get('session') ?? undefined;
+        const catalog = await scanner.invocables({ sessionId: session });
+        sendJson(res, 200, {
+          root: catalog.root,
+          present: catalog.present,
+          entries: catalog.entries,
+        });
+        return;
+      }
       if (route === 'file' && method === 'GET') {
         const url = new URL(req.url ?? '/', 'http://copilot-config.local');
         const session = url.searchParams.get('session') ?? undefined;

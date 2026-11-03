@@ -10,11 +10,14 @@
 
 import {
   COPILOT_KINDS,
+  INVOCABLE_KINDS,
   MAX_FILE_BYTES,
+  buildCopilotReference,
   classifyCopilotPath,
   describeEntry,
   extractFileLinks,
   buildFileAddress,
+  isSkillResource,
   markdownToBlocks,
   parseFrontmatter,
   renderPlainText,
@@ -26,6 +29,7 @@ const DEFAULT_LIMITS = {
   maxDepth: 4,
   maxDirEntries: 500,
   maxContextBytes: 16 * 1024,
+  maxReferenceBytes: 64 * 1024,
 };
 
 /** Directory names never worth walking inside a configuration tree. */
@@ -137,6 +141,7 @@ export function createCopilotScanner(options) {
         continue;
       }
       if (entry.type !== 'file') continue;
+      if (isSkillResource(relative)) continue;
       const kind = classifyCopilotPath(relative);
       if (kind === undefined) continue;
       const loaded = await readBounded(entry.target, signal);
@@ -150,6 +155,7 @@ export function createCopilotScanner(options) {
         description: described.description,
         applyTo: described.applyTo,
         mode: described.mode,
+        invoke: described.invoke,
         bytes: loaded.bytes,
       };
       out.files.push(file);
@@ -231,6 +237,7 @@ export function createCopilotScanner(options) {
       ...link,
       ...(link.external || sessionId === '' ? {} : { address: buildFileAddress(sessionId, link.path) }),
     }));
+    const text = renderPlainText(blocks);
     return {
       root,
       path: relativePath,
@@ -239,11 +246,60 @@ export function createCopilotScanner(options) {
       description: described.description,
       applyTo: described.applyTo,
       mode: described.mode,
+      invoke: described.invoke,
       bytes: loaded.bytes,
       blocks,
       links,
+      text,
+      ...(described.invoke === ''
+        ? {}
+        : {
+          reference: buildCopilotReference({
+            kind,
+            name: described.invoke,
+            path: relativePath,
+            text,
+            maxBytes: limits.maxReferenceBytes,
+          }),
+        }),
       ...(sessionId === '' ? {} : { address: buildFileAddress(sessionId, relativePath) }),
     };
+  }
+
+  /**
+   * Project one scan into the entries a user can bring in with `/`.
+   *
+   * @param {Awaited<ReturnType<typeof scan>>} snapshot
+   * @returns {unknown[]} invocable entries in scan order
+   */
+  function catalogOf(snapshot) {
+    const entries = [];
+    for (const file of snapshot?.files ?? []) {
+      if (!INVOCABLE_KINDS.includes(file.kind) || file.invoke === '') continue;
+      entries.push({
+        name: file.invoke,
+        kind: file.kind,
+        path: file.path,
+        title: file.title,
+        description: file.description,
+      });
+    }
+    return entries;
+  }
+
+  /**
+   * List the entries a user can bring into a conversation with `/`.
+   *
+   * Prompts, Agent Skills, chat modes, and custom agents are invocable; the
+   * repository and path-scoped instructions are context, not commands, so they
+   * stay out of the catalog.
+   *
+   * @param {{ sessionId?: string, agent?: unknown, signal?: AbortSignal }} [reader]
+   * @returns {Promise<{ root: string, present: boolean, entries: unknown[] }>}
+   */
+  async function invocables(reader = {}) {
+    const snapshot = await scan(reader);
+    return { root: snapshot.root, present: snapshot.present, entries: catalogOf(snapshot) };
   }
 
   /**
@@ -276,11 +332,26 @@ export function createCopilotScanner(options) {
       }
       lines.push('');
     }
+    const invocable = snapshot.files.filter((file) => INVOCABLE_KINDS.includes(file.kind) && file.invoke !== '');
+    if (invocable.length > 0) {
+      lines.push('## Copilot entries the user can bring in with `/`');
+      for (const file of invocable) {
+        const details = [
+          file.kind,
+          ...(file.description === '' ? [] : [file.description]),
+        ].join(' · ');
+        lines.push(`- /${file.invoke} → ${file.path} — ${details}`);
+      }
+      lines.push('');
+      lines.push('A pick arrives as a `<copilot_skill name="…" path="…">` or `<copilot_agent name="…" path="…">` '
+        + 'block carrying that file\'s content; a bare `/name` the user typed names the same file — '
+        + 'read it with the `copilot_config` tool (action: "read", path: "<path>") and follow it.');
+    }
     lines.push('Read any of these files in full with the `copilot_config` tool (action: "read", path: "<path>").');
     return lines.join('\n');
   }
 
-  return { limits, resolveRoot, scan, read, renderContext };
+  return { limits, resolveRoot, scan, read, catalogOf, invocables, renderContext };
 }
 
 /**

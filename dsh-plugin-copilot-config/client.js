@@ -1,10 +1,12 @@
 /**
  * Client half of the Copilot configuration plugin.
  *
- * A left-sidebar panel and its main page list the GitHub Copilot configuration
- * a project carries in `.github/`, render one file at a time, and turn every
- * relative markdown link into a file link that opens in the right sidebar's
- * Document preview.
+ * The GitHub Copilot configuration a project carries in `.github/` is rendered
+ * as one right-sidebar tab per Session, and the same catalog feeds the
+ * conversation: a `/` trigger source offers the project's prompts, Agent Skills,
+ * chat modes, and custom agents in the composer menu, a pick inserts a chip
+ * whose model form carries that file's content, and a sent reference renders
+ * back as a chip that reopens the file.
  *
  * @module dsh-plugin-copilot-config/client
  */
@@ -21,6 +23,45 @@ window.__ModuleLoader__.load({
     /** Locale namespace for every visible string. */
     const LOCALE_NS = 'plugin.copilot-config';
 
+    /** Name this plugin's trigger source registers under; unique per `/`. */
+    const SOURCE_NAME = 'copilot';
+
+    /** Tab kind the configuration page registers under in the right sidebar. */
+    const TAB_KIND = 'copilot-config';
+
+    /** Implementation identity in the tab system, and the key its body registers under. */
+    const TAB_ID = 'dsh-plugin-copilot-config';
+
+    /** Shortcut command that opens the configuration tab. */
+    const COMMAND_ID = 'copilot-config.open';
+
+    /** Menu section of every invocable kind. */
+    const SECTION_OF_KIND = { prompt: 'skills', skill: 'skills', chatmode: 'agents', agent: 'agents' };
+
+    /** Dictionary key of one menu section. */
+    const sectionKey = (section) => `section${section.charAt(0).toUpperCase()}${section.slice(1)}`;
+
+    // Original mark: a configuration document carrying two linked chain links,
+    // echoing "project config" plus the file links this plugin renders.
+    const Icon = ({ size = 20, active = false } = {}) => h('svg', {
+      width: size,
+      height: size,
+      viewBox: '0 0 24 24',
+      fill: 'none',
+      stroke: 'currentColor',
+      strokeWidth: active ? 2 : 1.7,
+      strokeLinecap: 'round',
+      strokeLinejoin: 'round',
+      'aria-hidden': 'true',
+    },
+    h('path', { d: 'M6.2 3.5h7.6l4 4v13a1 1 0 0 1-1 1H6.2a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1z' }),
+    h('path', { d: 'M13.8 3.5v4h4' }),
+    h('path', { d: 'M8.6 9.6h6.4' }),
+    h('path', { d: 'M8.6 12.2h4.2' }),
+    h('rect', { x: 8.4, y: 14.2, width: 5.2, height: 3, rx: 1.5 }),
+    h('rect', { x: 12.6, y: 13.4, width: 5.2, height: 3, rx: 1.5 }),
+    );
+
     const zh = {
       menu: 'Copilot 配置',
       title: 'Copilot 配置',
@@ -35,7 +76,7 @@ window.__ModuleLoader__.load({
       presentBadge: '已找到 .github',
       missingBadge: '没有 .github',
       missingTitle: '没有找到 Copilot 配置',
-      missingHint: '在项目里创建 .github/copilot-instructions.md、.github/instructions/*.instructions.md、.github/prompts/*.prompt.md 或 .github/chatmodes/*.chatmode.md 后刷新。',
+      missingHint: '在项目里创建 .github/copilot-instructions.md、.github/instructions/*.instructions.md、.github/prompts/*.prompt.md、.github/skills/*/SKILL.md 或 .github/chatmodes/*.chatmode.md 后刷新。',
       filesTitle: '配置文件',
       filesCount: '{count} 个文件',
       emptyGroup: '（空）',
@@ -51,11 +92,20 @@ window.__ModuleLoader__.load({
       kindInstructions: '仓库指令',
       kindInstruction: '路径指令',
       kindPrompt: '提示词',
+      kindSkill: '代理技能',
       kindChatmode: '聊天模式',
       kindAgent: '自定义代理',
       kindOther: '其他',
       openFailed: '右侧栏打开失败，已改用新窗口。',
       errorsNote: '部分路径无法读取：{message}',
+      invokeTitle: '对话中输入 /{name} 可引入',
+      sectionAgents: 'Copilot 代理',
+      sectionSkills: 'Copilot 技能',
+      chipTitle: 'Copilot 配置：{path}',
+      referenceFailed: '无法读取 Copilot 配置 {path}：{message}',
+      tabTitle: 'Copilot 配置',
+      guideDescription: '读取项目 .github 下的 Copilot 指令、提示词与代理',
+      shortcutNoSession: '请先选择会话',
     };
 
     const en = {
@@ -72,7 +122,7 @@ window.__ModuleLoader__.load({
       presentBadge: '.github found',
       missingBadge: 'no .github',
       missingTitle: 'No Copilot configuration found',
-      missingHint: 'Create .github/copilot-instructions.md, .github/instructions/*.instructions.md, .github/prompts/*.prompt.md, or .github/chatmodes/*.chatmode.md in the project, then refresh.',
+      missingHint: 'Create .github/copilot-instructions.md, .github/instructions/*.instructions.md, .github/prompts/*.prompt.md, .github/skills/*/SKILL.md, or .github/chatmodes/*.chatmode.md in the project, then refresh.',
       filesTitle: 'Configuration files',
       filesCount: '{count} files',
       emptyGroup: '(empty)',
@@ -88,19 +138,31 @@ window.__ModuleLoader__.load({
       kindInstructions: 'Repository instructions',
       kindInstruction: 'Path instructions',
       kindPrompt: 'Prompts',
+      kindSkill: 'Agent Skills',
       kindChatmode: 'Chat modes',
       kindAgent: 'Custom agents',
       kindOther: 'Other',
       openFailed: 'Could not open in the right sidebar; opened a new window instead.',
       errorsNote: 'Some paths could not be read: {message}',
+      invokeTitle: 'Bring into the conversation with /{name}',
+      sectionAgents: 'Copilot agents',
+      sectionSkills: 'Copilot skills',
+      chipTitle: 'Copilot configuration: {path}',
+      referenceFailed: 'Could not read the Copilot configuration {path}: {message}',
+      tabTitle: 'Copilot config',
+      guideDescription: 'Read the Copilot instructions, prompts, and agents a project keeps under .github',
+      shortcutNoSession: 'Select a session first',
     };
 
     /** Display order of the Copilot configuration kinds. */
-    const KINDS = ['instructions', 'instruction', 'prompt', 'chatmode', 'agent', 'other'];
+    const KINDS = ['instructions', 'instruction', 'prompt', 'skill', 'chatmode', 'agent', 'other'];
 
     const CSS = [
       '.rdc-root{height:100%;box-sizing:border-box;overflow:auto;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}',
       '.rdc-inner{display:flex;flex-direction:column;gap:16px;max-width:1180px;margin:0 auto;padding:28px 22px 48px;box-sizing:border-box}',
+      '.rdc-root[data-surface="tab"] .rdc-inner{padding:16px 14px 32px;gap:12px}',
+      '.rdc-root[data-surface="tab"] .rdc-title{font-size:19px;line-height:26px}',
+      '.rdc-root[data-surface="tab"] .rdc-sub{display:none}',
       '.rdc-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap}',
       '.rdc-hero-copy{display:flex;flex-direction:column;gap:6px;min-width:0;max-width:680px}',
       '.rdc-eyebrow{font-size:10px;line-height:16px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--dsw-alias-label-secondary)}',
@@ -113,6 +175,13 @@ window.__ModuleLoader__.load({
       '.rdc-badge{display:inline-flex;align-items:center;gap:3px;border:.5px solid var(--dsw-alias-border-l2);border-radius:999px;padding:0 7px;font-size:10px;line-height:16px;color:var(--dsw-alias-label-secondary);white-space:nowrap}',
       '.rdc-badge--ok{color:var(--dsw-alias-state-success-primary);border-color:var(--dsw-alias-state-success-primary)}',
       '.rdc-badge--muted{border-color:var(--dsw-alias-border-l1)}',
+      '.rdc-badge--invoke{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-border-l1)}',
+      '.rdc-chip{display:inline-flex;align-items:center;gap:0;max-width:100%;min-width:0;border:.5px solid var(--dsw-alias-border-l2);border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;line-height:18px;padding:0 6px;vertical-align:baseline}',
+      '.rdc-chip--button{cursor:pointer;appearance:none;-webkit-appearance:none}',
+      '.rdc-chip--button:hover{background:var(--dsw-alias-interactive-bg-hover)}',
+      '.rdc-chip--button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:1px}',
+      '.rdc-chip-slash{color:var(--dsw-alias-label-tertiary);flex:none}',
+      '.rdc-chip-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.rdc-body{display:grid;grid-template-columns:minmax(240px,320px) minmax(0,1fr);gap:14px;align-items:start}',
       '@media (max-width:900px){.rdc-body{grid-template-columns:minmax(0,1fr)}}',
       '.rdc-filelist{display:flex;flex-direction:column;gap:10px;min-width:0}',
@@ -184,7 +253,380 @@ window.__ModuleLoader__.load({
       return String(error);
     }
 
-    function createPage(ctx, t) {
+    /* ------------------------------------------------------------------ *
+     * API access
+     * ------------------------------------------------------------------ */
+
+    /** Fetch the per-process API token the local route hands to this page. */
+    async function bootstrap() {
+      const response = await fetch(API_ROOT + 'bootstrap', { credentials: 'same-origin' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || typeof data.token !== 'string') throw new Error(messageOf(data));
+      return data.token;
+    }
+
+    /**
+     * Call one token-protected route of the plugin API.
+     *
+     * @param {string} route - route name under the API root
+     * @param {Record<string, string>} [params] - query parameters
+     * @param {AbortSignal} [signal] - abort for a stale call
+     */
+    async function apiGet(route, params, signal) {
+      const token = await bootstrap();
+      const query = params === undefined ? '' : `?${new URLSearchParams(params).toString()}`;
+      const response = await fetch(API_ROOT + route + query, {
+        credentials: 'same-origin',
+        headers: { 'x-copilot-config-token': token },
+        ...(signal === undefined ? {} : { signal }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(messageOf(data));
+      return data;
+    }
+
+    /* ------------------------------------------------------------------ *
+     * `/` references — pure helpers
+     * ------------------------------------------------------------------ */
+
+    /**
+     * Build the `dsh-resource://` address of a workspace file.
+     *
+     * Mirrors `buildFileAddress` from `lib/copilot.js`: the Host half and this
+     * bundle cannot share a module, and one address scheme keeps a picked
+     * reference opening in the same Document preview the Files tab uses.
+     *
+     * @param {string} sessionId - Session the path is read in
+     * @param {string} path - workspace-relative path
+     * @returns {string}
+     */
+    function sessionFileAddress(sessionId, path) {
+      const encodeSegment = (segment) => encodeURIComponent(segment).replace(/%3A/gi, ':');
+      const encodePath = (value) => value.split('/').map(encodeSegment).join('/');
+      const normalized = String(path ?? '').replace(/\\/g, '/').replace(/^(?:\.\/)+/, '');
+      return `dsh-resource://file/session/${encodeSegment(String(sessionId ?? ''))}/${encodePath(normalized)}`;
+    }
+
+    /**
+     * Derive the name a user types after `/` from one configuration path.
+     *
+     * The path-only fallback of the Host's `deriveSlug`: it answers for a
+     * clipboard projection whose frontmatter `name` is no longer at hand.
+     *
+     * @param {string} path - repository-relative path under `.github/`
+     * @returns {string}
+     */
+    function slugFromPath(path) {
+      const segments = String(path ?? '').replace(/\\/g, '/').split('/');
+      const base = segments.pop() ?? '';
+      if (base.toLowerCase() === 'skill.md') {
+        const directory = segments.pop() ?? '';
+        if (directory !== '') return directory;
+      }
+      return base.replace(/\.md$/i, '').replace(/\.(prompt|chatmode|instructions|agent)$/i, '');
+    }
+
+    /**
+     * Pack one picked entry into the opaque reference id a chip carries.
+     *
+     * The Session travels with the path because the reference is serialized at
+     * submit time, when no session projection is at hand, and the Host
+     * resolves `.github` against the Session's working directory.
+     *
+     * @param {string} sessionId - Session the entry was picked in
+     * @param {string} path - repository-relative path
+     * @returns {string}
+     */
+    function encodeRef(sessionId, path) {
+      return `${String(sessionId ?? '')}::${String(path ?? '')}`;
+    }
+
+    /**
+     * Split one reference id back into its Session and path.
+     *
+     * @param {string} ref - id from {@link encodeRef}
+     * @returns {{ sessionId: string, path: string }}
+     */
+    function decodeRef(ref) {
+      const raw = String(ref ?? '');
+      const cut = raw.indexOf('::');
+      if (cut === -1) return { sessionId: '', path: raw };
+      return { sessionId: raw.slice(0, cut), path: raw.slice(cut + 2) };
+    }
+
+    /**
+     * Score one candidate against the text typed after `/`.
+     *
+     * @param {Record<string, unknown>} row - candidate
+     * @param {string} needle - lower-cased query
+     * @returns {number} `0` when the row does not match at all
+     */
+    function scoreRow(row, needle) {
+      const name = String(row.name ?? '').toLowerCase();
+      const label = String(row.label ?? '').toLowerCase();
+      const description = String(row.description ?? '').toLowerCase();
+      if (name === needle) return 100;
+      if (name.startsWith(needle)) return 80;
+      if (label.startsWith(needle)) return 60;
+      if (name.includes(needle)) return 40;
+      if (label.includes(needle)) return 20;
+      if (description.includes(needle)) return 10;
+      return 0;
+    }
+
+    /**
+     * Rank the menu candidates, keeping one section's rows adjacent.
+     *
+     * @param {ReadonlyArray<Record<string, unknown>>} rows - candidates
+     * @param {string} query - text typed after `/`
+     * @returns {Array<Record<string, unknown>>} the rows to show
+     */
+    function rankRows(rows, query) {
+      const list = [...rows];
+      const needle = String(query ?? '').trim().toLowerCase();
+      if (needle === '') return list;
+      const scored = [];
+      for (const row of list) {
+        const score = scoreRow(row, needle);
+        if (score > 0) scored.push({ row, score });
+      }
+      scored.sort((left, right) => (
+        right.score - left.score || String(left.row.name).localeCompare(String(right.row.name))
+      ));
+      const ranked = scored.map((item) => item.row);
+      const sections = [];
+      for (const row of ranked) if (!sections.includes(row.section)) sections.push(row.section);
+      const grouped = [];
+      for (const section of sections) {
+        for (const row of ranked) if (row.section === section) grouped.push(row);
+      }
+      return grouped;
+    }
+
+    /**
+     * Reverse the attribute escaping the Host applies when it builds a block.
+     *
+     * @param {string} value - escaped attribute value
+     * @returns {string}
+     */
+    function unescapeAttribute(value) {
+      return String(value ?? '')
+        .replace(/&quot;/g, '"')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&');
+    }
+
+    /** One serialized reference block inside a sent message. */
+    const REFERENCE_BLOCK = /<copilot_(skill|agent) name="([^"]*)" path="([^"]*)">[\s\S]*?<\/copilot_\1>/g;
+
+    /**
+     * Render one `<copilot_skill>` / `<copilot_agent>` block of a sent message
+     * as a chip that reopens the file it came from.
+     */
+    const copilotReferenceRule = {
+      id: 'copilot',
+      order: 25,
+      match(text, from) {
+        REFERENCE_BLOCK.lastIndex = from;
+        const match = REFERENCE_BLOCK.exec(text);
+        if (match === null) return undefined;
+        return {
+          id: 'copilot',
+          start: match.index,
+          end: match.index + match[0].length,
+          data: {
+            kind: match[1],
+            name: unescapeAttribute(match[2]),
+            path: unescapeAttribute(match[3]),
+          },
+        };
+      },
+    };
+
+    /* ------------------------------------------------------------------ *
+     * `/` references — catalog, source, and chip
+     * ------------------------------------------------------------------ */
+
+    /**
+     * Build the conversation half of the `/` pipeline.
+     *
+     * One catalog per Session feeds the composer menu, the reference codec,
+     * and the panel refresh; a failed read drops the cache entry so the next
+     * interaction retries instead of serving a stale answer.
+     *
+     * @param {Record<string, unknown>} ctx - client root context
+     * @param {(key: string) => string} t - translator
+     */
+    function createReferenceLayer(ctx, t) {
+      const caches = new Map();
+
+      function fill(key, vars) {
+        let text = String(t(key));
+        if (!isObject(vars)) return text;
+        for (const [name, value] of Object.entries(vars)) {
+          text = text.split('{' + name + '}').join(String(value));
+        }
+        return text;
+      }
+
+      function sidebarService() {
+        try {
+          if (ctx.sidebarRight !== undefined && ctx.sidebarRight !== null) return ctx.sidebarRight;
+        } catch {
+          /* fall through to the optional lookup */
+        }
+        try {
+          if (typeof ctx.get === 'function') {
+            const service = ctx.get('sidebarRight');
+            if (service !== undefined && service !== null) return service;
+          }
+        } catch (error) {
+          console.error('[copilot-config] sidebarRight lookup failed', error);
+        }
+        return undefined;
+      }
+
+      function openFile(sessionId, path) {
+        const sidebar = sidebarService();
+        if (sidebar !== undefined && typeof sidebar.openResource === 'function') {
+          try {
+            sidebar.openResource(sessionFileAddress(sessionId, path));
+            return true;
+          } catch (error) {
+            console.error('[copilot-config] openResource failed', error);
+          }
+        }
+        return false;
+      }
+
+      function catalogOf(sessionId) {
+        const existing = caches.get(sessionId);
+        if (existing !== undefined) return existing;
+        const entry = { entries: [], promise: undefined };
+        entry.promise = (async () => {
+          const data = await apiGet('catalog', sessionId === '' ? undefined : { session: sessionId });
+          entry.entries = Array.isArray(data.entries) ? data.entries : [];
+          return entry.entries;
+        })().catch((error) => {
+          if (caches.get(sessionId) === entry) caches.delete(sessionId);
+          throw error;
+        });
+        entry.promise.catch(() => {});
+        caches.set(sessionId, entry);
+        return entry;
+      }
+
+      function invalidate(sessionId) {
+        caches.delete(sessionId);
+      }
+
+      function invalidateAll() {
+        caches.clear();
+      }
+
+      const source = {
+        trigger: '/',
+        name: SOURCE_NAME,
+        order: 3,
+        showGroupTitle: false,
+        async candidates(session, req) {
+          const entries = await catalogOf(session.sessionId).promise;
+          if (req.signal.aborted) return [];
+          const rows = [];
+          for (const entry of entries) {
+            const section = SECTION_OF_KIND[entry.kind];
+            if (section === undefined) continue;
+            const name = String(entry.name ?? '');
+            const path = String(entry.path ?? '');
+            if (name === '' || path === '') continue;
+            rows.push({
+              name,
+              label: String(entry.title ?? '') === '' ? name : String(entry.title),
+              description: String(entry.description ?? ''),
+              section: t(sectionKey(section)),
+              value: path,
+            });
+          }
+          return rankRows(rows, req.query);
+        },
+        warm(session) {
+          catalogOf(session.sessionId).promise.catch(() => {});
+        },
+        onPick(pick) {
+          const name = String(pick.candidate.name ?? '');
+          const path = String(pick.candidate.value ?? '');
+          if (name === '' || path === '') return undefined;
+          return {
+            insert: {
+              source: SOURCE_NAME,
+              ref: encodeRef(pick.session.sessionId, path),
+              label: `/${name}`,
+              appearance: 'file',
+              clipboardText: `/${name}`,
+            },
+          };
+        },
+        openReference(session, reference) {
+          const decoded = decodeRef(reference?.ref);
+          if (decoded.path === '') return false;
+          const sessionId = String(session?.sessionId ?? '') === '' ? decoded.sessionId : String(session.sessionId);
+          return openFile(sessionId, decoded.path);
+        },
+        codec: {
+          clipboardText(ref) {
+            return `/${slugFromPath(decodeRef(ref).path)}`;
+          },
+          async serialize(ref, signal) {
+            const decoded = decodeRef(ref);
+            if (decoded.path === '') throw new Error('the Copilot reference lost its path');
+            try {
+              const data = await apiGet('file', {
+                path: decoded.path,
+                ...(decoded.sessionId === '' ? {} : { session: decoded.sessionId }),
+              }, signal);
+              const file = isObject(data.file) ? data.file : undefined;
+              const reference = typeof file?.reference === 'string' ? file.reference : '';
+              if (reference === '') throw new Error('the file is not an invocable Copilot entry');
+              return reference;
+            } catch (error) {
+              throw new Error(fill('referenceFailed', { path: decoded.path, message: messageOf(error) }));
+            }
+          },
+        },
+      };
+
+      function CopilotReference({ node, interactive, openCopilot }) {
+        const data = isObject(node?.data) ? node.data : {};
+        const name = String(data.name ?? '');
+        const path = String(data.path ?? '');
+        const label = name === '' ? path : `/${name}`;
+        const body = h(React.Fragment, null,
+          h('span', { className: 'rdc-chip-slash', 'aria-hidden': 'true' }, '/'),
+          h('span', { className: 'rdc-chip-label' }, label),
+        );
+        if (interactive === true && typeof openCopilot === 'function' && path !== '') {
+          return h('button', {
+            type: 'button',
+            className: 'rdc-chip rdc-chip--button',
+            title: fill('chipTitle', { path }),
+            onClick: () => openCopilot(path),
+          }, body);
+        }
+        return h('span', { className: 'rdc-chip', title: fill('chipTitle', { path }) }, body);
+      }
+
+      return { source, rule: copilotReferenceRule, CopilotReference, openFile, invalidate, invalidateAll };
+    }
+
+    /**
+     * Build the configuration page.
+     *
+     * @param {Record<string, unknown>} ctx - client root context
+     * @param {(key: string) => string} t - translator
+     * @param {{ invalidate: (sessionId: string) => void }} [reference] - `/` layer to refresh with the panel
+     */
+    function createPage(ctx, t, reference) {
       function fill(key, vars) {
         let text = String(t(key));
         if (!isObject(vars)) return text;
@@ -224,13 +666,6 @@ window.__ModuleLoader__.load({
         return false;
       }
 
-      async function bootstrap() {
-        const response = await fetch(API_ROOT + 'bootstrap', { credentials: 'same-origin' });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || typeof data.token !== 'string') throw new Error(messageOf(data));
-        return data.token;
-      }
-
       const glyph = (paths, size = 14) => h('svg', {
         width: size,
         height: size,
@@ -251,7 +686,10 @@ window.__ModuleLoader__.load({
       return function RemoteCopilotPage(props) {
         const useSessions = typeof props?.useSessions === 'function' ? props.useSessions : () => undefined;
         const sessionsSnapshot = useSessions((state) => state);
-        const sessionId = React.useMemo(() => {
+        // The tab body hands over the Session it belongs to; the fallback reads
+        // the main Session when the page is rendered outside a tab.
+        const ownSession = typeof props?.sessionId === 'string' ? props.sessionId : '';
+        const mainSession = React.useMemo(() => {
           if (!isObject(sessionsSnapshot)) return '';
           const byId = isObject(sessionsSnapshot.byId) ? sessionsSnapshot.byId : {};
           const ids = Array.isArray(sessionsSnapshot.ids) ? sessionsSnapshot.ids : Object.keys(byId);
@@ -261,6 +699,8 @@ window.__ModuleLoader__.load({
           });
           return main ?? ids[0] ?? '';
         }, [sessionsSnapshot]);
+        const sessionId = ownSession !== '' ? ownSession : mainSession;
+        const surface = props?.surface === 'tab' ? 'tab' : 'page';
 
         const [notice, setNotice] = React.useState(null);
         const [state, setState] = React.useState({
@@ -280,16 +720,7 @@ window.__ModuleLoader__.load({
         const load = React.useCallback(async () => {
           setState((current) => ({ ...current, phase: 'loading', error: '' }));
           try {
-            const token = await bootstrap();
-            const params = new URLSearchParams();
-            if (sessionId !== '') params.set('session', sessionId);
-            const query = params.toString();
-            const response = await fetch(API_ROOT + 'config' + (query === '' ? '' : `?${query}`), {
-              credentials: 'same-origin',
-              headers: { 'x-copilot-config-token': token },
-            });
-            const data = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(messageOf(data));
+            const data = await apiGet('config', sessionId === '' ? undefined : { session: sessionId });
             setState({
               phase: 'ready',
               error: '',
@@ -298,6 +729,7 @@ window.__ModuleLoader__.load({
               files: Array.isArray(data.files) ? data.files : [],
               errors: Array.isArray(data.errors) ? data.errors : [],
             });
+            if (typeof reference?.invalidate === 'function') reference.invalidate(sessionId);
           } catch (error) {
             setState((current) => ({ ...current, phase: 'error', error: messageOf(error) }));
           }
@@ -310,16 +742,10 @@ window.__ModuleLoader__.load({
         const open = React.useCallback(async (path) => {
           setDetail({ phase: 'loading', path, file: undefined, error: '' });
           try {
-            const token = await bootstrap();
-            const params = new URLSearchParams();
-            if (sessionId !== '') params.set('session', sessionId);
-            params.set('path', path);
-            const response = await fetch(API_ROOT + 'file?' + params.toString(), {
-              credentials: 'same-origin',
-              headers: { 'x-copilot-config-token': token },
+            const data = await apiGet('file', {
+              ...(sessionId === '' ? {} : { session: sessionId }),
+              path,
             });
-            const data = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(messageOf(data));
             setDetail({ phase: 'ready', path, file: data.file, error: '' });
           } catch (error) {
             setDetail({ phase: 'error', path, file: undefined, error: messageOf(error) });
@@ -432,6 +858,9 @@ window.__ModuleLoader__.load({
             h('span', { className: 'rdc-item-name' }, file.title || file.path),
             h('span', { className: 'rdc-item-path' }, file.path),
             h('span', { className: 'rdc-item-meta' },
+              file.invoke === '' || file.invoke === undefined
+                ? null
+                : h('span', { className: 'rdc-badge rdc-badge--invoke', title: fill('invokeTitle', { name: file.invoke }) }, `/${file.invoke}`),
               file.applyTo === '' ? null : h('span', { className: 'rdc-badge rdc-badge--muted' }, `${t('applyToLabel')} ${file.applyTo}`),
               file.mode === '' ? null : h('span', { className: 'rdc-badge rdc-badge--muted' }, `${t('modeLabel')} ${file.mode}`),
             ),
@@ -461,6 +890,9 @@ window.__ModuleLoader__.load({
                     h('div', { className: 'rdc-viewer-path' }, file.path),
                     h('div', { className: 'rdc-viewer-meta' },
                       h('span', { className: 'rdc-badge rdc-badge--muted' }, kindLabel(file.kind)),
+                      file.invoke === '' || file.invoke === undefined
+                        ? null
+                        : h('span', { className: 'rdc-badge rdc-badge--invoke', title: fill('invokeTitle', { name: file.invoke }) }, `/${file.invoke}`),
                       file.applyTo === '' ? null : h('span', { className: 'rdc-badge rdc-badge--muted' }, `${t('applyToLabel')} ${file.applyTo}`),
                       file.mode === '' ? null : h('span', { className: 'rdc-badge rdc-badge--muted' }, `${t('modeLabel')} ${file.mode}`),
                       h('span', { className: 'rdc-badge rdc-badge--muted' }, `${t('bytesLabel')} ${file.bytes}`),
@@ -506,7 +938,7 @@ window.__ModuleLoader__.load({
         );
 
         if (state.phase === 'loading') {
-          return h('div', { className: 'rdc-root' }, h('div', { className: 'rdc-inner' },
+          return h('div', { className: 'rdc-root', 'data-surface': surface }, h('div', { className: 'rdc-inner' },
             h('div', { className: 'rdc-state' },
               h('span', { className: 'rdc-spinner', 'aria-hidden': 'true' }),
               h('span', null, t('loading')),
@@ -515,7 +947,7 @@ window.__ModuleLoader__.load({
         }
 
         if (state.phase === 'error') {
-          return h('div', { className: 'rdc-root' }, h('div', { className: 'rdc-inner' },
+          return h('div', { className: 'rdc-root', 'data-surface': surface }, h('div', { className: 'rdc-inner' },
             h('div', { className: 'rdc-state' },
               h('div', { className: 'rdc-note rdc-note--error' }, fill('loadFailed', { message: state.error })),
               h('button', { type: 'button', className: 'rdc-btn', onClick: load }, t('retry')),
@@ -523,7 +955,7 @@ window.__ModuleLoader__.load({
           ));
         }
 
-        return h('div', { className: 'rdc-root' },
+        return h('div', { className: 'rdc-root', 'data-surface': surface },
           h('div', { className: 'rdc-inner' },
             h('header', { className: 'rdc-hero' },
               h('div', { className: 'rdc-hero-copy' },
@@ -584,54 +1016,120 @@ window.__ModuleLoader__.load({
         console.error('[copilot-config] locale unavailable, falling back to built-in copy', error);
       }
 
+      const reference = createReferenceLayer(ctx, t);
+
+      // One page component, wrapped once: a new component identity on every
+      // render would remount the whole tab and lose its selection.
+      const Page = createPage(ctx, t, reference);
+      const TabBody = (props) => h(Page, { ...props, surface: 'tab' });
+
       ctx.effect(() => {
         const offs = [];
+        // A slot a host does not declare must not take the others down with it:
+        // the failure is logged and the remaining contributions still register.
         const contribute = (owner, options, Component) => {
           if (typeof ctx.slots?.inject !== 'function' || typeof ctx.slots?.register !== 'function') return;
           const off = ctx.slots.inject(owner, function* () {
-            yield ctx.slots.register(options, Component);
+            try {
+              yield ctx.slots.register(options, Component);
+            } catch (error) {
+              console.error(`[copilot-config] slot ${owner} unavailable`, error);
+            }
           });
           if (typeof off === 'function') offs.push(off);
         };
 
-        // Original mark: a configuration document carrying two linked chain links,
-        // echoing "project config" plus the file links this plugin renders.
-        const Icon = ({ size = 20, active = false } = {}) => h('svg', {
-          width: size,
-          height: size,
-          viewBox: '0 0 24 24',
-          fill: 'none',
-          stroke: 'currentColor',
-          strokeWidth: active ? 2 : 1.7,
-          strokeLinecap: 'round',
-          strokeLinejoin: 'round',
-          'aria-hidden': 'true',
-        },
-        h('path', { d: 'M6.2 3.5h7.6l4 4v13a1 1 0 0 1-1 1H6.2a1 1 0 0 1-1-1v-16a1 1 0 0 1 1-1z' }),
-        h('path', { d: 'M13.8 3.5v4h4' }),
-        h('path', { d: 'M8.6 9.6h6.4' }),
-        h('path', { d: 'M8.6 12.2h4.2' }),
-        h('rect', { x: 8.4, y: 14.2, width: 5.2, height: 3, rx: 1.5 }),
-        h('rect', { x: 12.6, y: 13.4, width: 5.2, height: 3, rx: 1.5 }),
-        );
-
-        contribute('sidebar.panellist', {
-          name: 'sidebar.panellist',
-          id: 'copilot-config',
-          order: 40,
-          label: () => t('menu'),
-        }, Icon);
-        contribute('main', { name: 'main', key: 'copilot-config' }, createPage(ctx, t));
+        // The configuration lives in the conversation's right panel: one tab per
+        // Session, opened from the panel's guide or the shortcut below.
+        contribute('sidebar.right.pane.tab', {
+          name: 'sidebar.right.pane.tab',
+          key: TAB_ID,
+        }, TabBody);
+        contribute('conversation.user.text.node', {
+          name: 'conversation.user.text.node',
+          key: SOURCE_NAME,
+          priority: 100,
+          inject: (sessionId) => ({
+            openCopilot: (path) => { reference.openFile(sessionId, path); },
+          }),
+        }, reference.CopilotReference);
         return () => {
           for (const off of offs) {
             try { off(); } catch { /* ignore */ }
           }
         };
       }, 'copilot-config: slots');
+
+      // The tab type itself, with the guide entry box that opens it.
+      ctx.inject(['sidebarRightTabs'], (tabCtx) => {
+        tabCtx.effect(() => tabCtx.sidebarRightTabs.register({
+          id: TAB_ID,
+          kind: TAB_KIND,
+          priority: 'extension',
+          title: () => t('tabTitle'),
+          guide: [{
+            id: 'config',
+            commandId: COMMAND_ID,
+            order: 40,
+            title: () => t('menu'),
+            description: () => t('guideDescription'),
+            icon: Icon,
+          }],
+        }), 'copilot-config: tab type');
+      });
+
+      // A keyboard path to the tab, now that no menu row opens it.
+      ctx.inject(['shortcuts', 'sidebarRight'], (shortcutCtx) => {
+        shortcutCtx.effect(() => shortcutCtx.shortcuts.register({
+          id: COMMAND_ID,
+          label: () => t('menu'),
+          aliases: ['copilot config', 'copilot configuration', 'copilot 配置'],
+          defaults: {},
+          regions: ['page', 'editable', 'terminal'],
+          modals: [],
+          resolve: ({ target: element }) => {
+            const target = shortcutCtx.sidebarRight.commandTarget(element);
+            if (target === undefined) return { status: 'blocked', reason: t('shortcutNoSession') };
+            return {
+              status: 'handled',
+              run: () => { shortcutCtx.sidebarRight.openTabFromTarget(TAB_KIND, target); },
+            };
+          },
+        }), 'copilot-config: shortcut');
+      });
+
+      // `/` menu: the project's prompts, Agent Skills, chat modes, and agents.
+      // Both services are optional at runtime: a host without the conversation
+      // UI keeps the tab, and the references simply never register.
+      ctx.inject(['inputTriggers'], (triggerCtx) => {
+        triggerCtx.effect(() => {
+          const unregister = triggerCtx.inputTriggers.registerSource(reference.source);
+          return () => {
+            unregister();
+            reference.invalidateAll();
+          };
+        }, 'copilot-config: slash source');
+      });
+
+      // Sent references render back as chips instead of raw wrapper blocks.
+      ctx.inject(['uiConversation'], (conversationCtx) => {
+        conversationCtx.effect(
+          () => conversationCtx.uiConversation.userText.register(reference.rule),
+          'copilot-config: user text',
+        );
+      });
     }
 
-    const internals = { createPage, CSS, zh, en };
+    const internals = {
+      createPage, CSS, zh, en,
+      rankRows, slugFromPath, encodeRef, decodeRef, sessionFileAddress,
+      copilotReferenceRule, createReferenceLayer,
+    };
 
-    return { inject: ['slots', 'locale', 'sidebarRight'], apply, __internals: internals };
+    return {
+      inject: ['slots', 'locale', 'sidebarRight'],
+      apply,
+      __internals: internals,
+    };
   },
 });

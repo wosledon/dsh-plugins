@@ -15,17 +15,35 @@ export const GITHUB_DIR = '.github';
 /** Repository-wide instructions file VS Code Copilot reads. */
 export const MAIN_INSTRUCTIONS_FILE = 'copilot-instructions.md';
 
+/** Directory that carries Copilot Agent Skills. */
+export const SKILLS_DIR = 'skills';
+
+/** File every Agent Skill directory must carry. */
+export const SKILL_FILE = 'skill.md';
+
+/** The `SKILL.md` of one Agent Skill, relative to `.github/`. */
+const SKILL_FILE_PATTERN = new RegExp(`^${SKILLS_DIR}/[^/]+/${SKILL_FILE.replace(/\./g, '\\.')}$`, 'i');
+
+/** Everything else an Agent Skill directory may carry. */
+const SKILLS_PREFIX_PATTERN = new RegExp(`^${SKILLS_DIR}/`, 'i');
+
 /** Recognized Copilot configuration kinds, in display order. */
-export const COPILOT_KINDS = ['instructions', 'instruction', 'prompt', 'chatmode', 'agent', 'other'];
+export const COPILOT_KINDS = ['instructions', 'instruction', 'prompt', 'skill', 'chatmode', 'agent', 'other'];
+
+/** Kinds a user can bring into a conversation with `/` in the Web GUI. */
+export const INVOCABLE_KINDS = ['prompt', 'skill', 'chatmode', 'agent'];
 
 /** Maximum bytes read from one configuration file. */
 export const MAX_FILE_BYTES = 256 * 1024;
+
+/** Maximum bytes of one configuration body inlined into a conversation. */
+export const MAX_REFERENCE_BYTES = 64 * 1024;
 
 /**
  * Classify one repository-relative path.
  *
  * @param {string} relativePath - path using `/` separators, relative to the project root
- * @returns {'instructions'|'instruction'|'prompt'|'chatmode'|'agent'|'other'|undefined}
+ * @returns {'instructions'|'instruction'|'prompt'|'skill'|'chatmode'|'agent'|'other'|undefined}
  *   the kind, or `undefined` when the path is not Copilot markdown configuration
  */
 export function classifyCopilotPath(relativePath) {
@@ -37,10 +55,37 @@ export function classifyCopilotPath(relativePath) {
   if (lower === MAIN_INSTRUCTIONS_FILE) return 'instructions';
   if (lower.endsWith('.instructions.md')) return 'instruction';
   if (lower.endsWith('.prompt.md')) return 'prompt';
+  if (isSkillFilePath(rest)) return 'skill';
   if (lower.endsWith('.chatmode.md')) return 'chatmode';
   if (lower.endsWith('.agent.md')) return 'agent';
   if (lower.endsWith('.md')) return 'other';
   return undefined;
+}
+
+/**
+ * Whether a `.github`-relative path is the `SKILL.md` of an Agent Skill.
+ *
+ * @param {string} rest - path relative to `.github/`, original spelling
+ * @returns {boolean}
+ */
+function isSkillFilePath(rest) {
+  return SKILL_FILE_PATTERN.test(rest);
+}
+
+/**
+ * Whether a `.github`-relative path is bundled payload of an Agent Skill
+ * (`scripts/`, `references/`, `assets/`, `templates/`, licenses) rather than
+ * Copilot configuration of its own.
+ *
+ * @param {string} relativePath - path using `/` separators, relative to the project root
+ * @returns {boolean}
+ */
+export function isSkillResource(relativePath) {
+  const normalized = String(relativePath ?? '').replace(/\\/g, '/').replace(/^(?:\.\/)+/, '');
+  if (!normalized.startsWith(`${GITHUB_DIR}/`)) return false;
+  const rest = normalized.slice(GITHUB_DIR.length + 1);
+  if (!SKILLS_PREFIX_PATTERN.test(rest)) return false;
+  return !isSkillFilePath(rest);
 }
 
 /**
@@ -404,12 +449,99 @@ export function spanText(spans) {
  * @param {string} kind - kind from {@link classifyCopilotPath}
  * @param {Record<string, string>} data - parsed frontmatter
  * @param {string} body - content after the frontmatter
- * @returns {{ title: string, description: string, applyTo: string, mode: string }}
+ * @returns {{ title: string, description: string, applyTo: string, mode: string, invoke: string }}
  */
 export function describeEntry(relativePath, kind, data, body) {
   const title = deriveTitle(relativePath, data, body);
   const description = typeof data?.description === 'string' ? data.description.trim() : '';
   const applyTo = typeof data?.applyTo === 'string' ? data.applyTo.trim() : '';
   const mode = typeof data?.mode === 'string' ? data.mode.trim() : '';
-  return { title, description, applyTo, mode };
+  const invoke = INVOCABLE_KINDS.includes(kind) ? deriveSlug(relativePath, kind, data) : '';
+  return { title, description, applyTo, mode, invoke };
+}
+
+/**
+ * Derive the name a user types after `/` to bring one entry into a conversation.
+ *
+ * The frontmatter `name` wins when it is a single token — an Agent Skill
+ * declares it — and the file name carries the rest: `review.prompt.md` is
+ * `/review`, `plan.chatmode.md` is `/plan`, `skills/webapp-testing/SKILL.md`
+ * is `/webapp-testing`.
+ *
+ * @param {string} relativePath - repository-relative path
+ * @param {string} kind - kind from {@link classifyCopilotPath}
+ * @param {Record<string, string>} data - parsed frontmatter
+ * @returns {string} the invocation name, or `''` when none can be derived
+ */
+export function deriveSlug(relativePath, kind, data) {
+  const named = typeof data?.name === 'string' ? data.name.trim() : '';
+  if (named !== '' && !/[\s/\\]/.test(named)) return named;
+  const segments = String(relativePath ?? '').replace(/\\/g, '/').split('/');
+  const base = segments.pop() ?? '';
+  if (kind === 'skill') {
+    const directory = segments.pop() ?? '';
+    if (directory !== '') return directory;
+  }
+  return base.replace(/\.md$/i, '').replace(/\.(prompt|chatmode|instructions|agent)$/i, '');
+}
+
+/**
+ * The model-facing wrapper tag of one invocable entry.
+ *
+ * Prompts and Agent Skills are instruction bundles; chat modes and custom
+ * agents are personas. Both shapes carry the same `name` and `path`
+ * attributes, so the model can always name the file it is following.
+ *
+ * @param {string} kind - kind from {@link classifyCopilotPath}
+ * @returns {'copilot_skill'|'copilot_agent'}
+ */
+export function copilotReferenceTag(kind) {
+  return kind === 'chatmode' || kind === 'agent' ? 'copilot_agent' : 'copilot_skill';
+}
+
+/**
+ * Escape one attribute value for the model-facing wrapper.
+ *
+ * @param {string} value - raw attribute value
+ * @returns {string}
+ */
+function escapeAttribute(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Render one invocable entry as the block a conversation message carries.
+ *
+ * The body is the file's own markdown, so the model reads the instructions it
+ * was handed instead of guessing a path. An oversized body is cut at
+ * {@link MAX_REFERENCE_BYTES} with a visible marker that names the tool that
+ * reads the rest — never a silent downgrade.
+ *
+ * @param {object} entry
+ * @param {string} entry.kind - kind from {@link classifyCopilotPath}
+ * @param {string} entry.name - invocation name
+ * @param {string} entry.path - repository-relative path
+ * @param {string} entry.text - file body as plain text
+ * @param {number} [entry.maxBytes] - body byte bound
+ * @returns {string} the complete `<copilot_skill>` / `<copilot_agent>` block
+ */
+export function buildCopilotReference(entry) {
+  const tag = copilotReferenceTag(entry.kind);
+  const limit = Number(entry.maxBytes);
+  const bound = Number.isFinite(limit) && limit > 0 ? limit : MAX_REFERENCE_BYTES;
+  let body = String(entry.text ?? '').replace(/\r\n?/g, '\n').replace(/^\n+/, '').replace(/\s+$/, '');
+  let truncated = false;
+  if (Buffer.byteLength(body, 'utf8') > bound) {
+    body = Buffer.from(body, 'utf8').subarray(0, bound).toString('utf8');
+    truncated = true;
+  }
+  const lines = [`<${tag} name="${escapeAttribute(entry.name)}" path="${escapeAttribute(entry.path)}">`];
+  if (body !== '') lines.push(body);
+  if (truncated) lines.push('… [truncated — read the rest with the `copilot_config` tool]');
+  lines.push(`</${tag}>`);
+  return lines.join('\n');
 }

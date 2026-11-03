@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
-  "description": "Read the GitHub Copilot configuration a project keeps under .github/ (instructions, path-scoped instructions, prompts, chat modes, custom agents), expose it to the agent as a tool and prompt context, and render it in the Web UI with working file links.",
+  "description": "Read the GitHub Copilot configuration a project keeps under .github/ (instructions, path-scoped instructions, prompts, Agent Skills, chat modes, custom agents), expose it to the agent as a tool and prompt context, bring the invocable entries into a conversation with /, and render it in the Web UI with working file links.",
   "type": "module",
   "icon": "./icon.svg",
   "exports": {

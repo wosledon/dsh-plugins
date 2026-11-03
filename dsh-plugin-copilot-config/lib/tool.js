@@ -8,8 +8,6 @@
  * @module dsh-plugin-copilot-config/lib/tool
  */
 
-import { renderPlainText } from './copilot.js';
-
 /** Tool name the model calls. */
 export const TOOL_NAME = 'copilot_config';
 
@@ -22,7 +20,12 @@ export const SECTION_TEXT = [
   '`.github/copilot-instructions.md` (repository-wide instructions),',
   '`.github/instructions/**/*.instructions.md` (path-scoped instructions with an `applyTo` frontmatter),',
   '`.github/prompts/*.prompt.md` (reusable prompts),',
+  '`.github/skills/*/SKILL.md` (Agent Skills),',
   '`.github/chatmodes/*.chatmode.md` (custom chat modes), and `.github/agents/*.agent.md`.',
+  'In the Web GUI the user can type `/` in the composer to bring one of the invocable entries',
+  '(prompts, Agent Skills, chat modes, custom agents) into the conversation: a pick arrives as a',
+  '`<copilot_skill name="…" path="…">…</copilot_skill>` or `<copilot_agent name="…" path="…">…</copilot_agent>`',
+  'block carrying that file\'s content, and a bare `/name` the user typed names the same file.',
   `When the task touches code style, conventions, or a reusable prompt, call the \`${TOOL_NAME}\` tool`,
   'with `action: "list"` to see what exists and `action: "read"` with a `path` to read one file,',
   'then follow it. The project instructions loaded into your context already cover the main file;',
@@ -39,7 +42,7 @@ export function createCopilotTool(scanner) {
   return {
     name: TOOL_NAME,
     description: 'Read the GitHub Copilot configuration of the current project from `.github/` '
-      + '(repository instructions, path-scoped instructions, prompt files, chat modes, and custom agents). '
+      + '(repository instructions, path-scoped instructions, prompt files, Agent Skills, chat modes, and custom agents). '
       + 'Use action "list" to discover the files and action "read" with a repository-relative path to read one.',
     parameters: {
       type: 'object',
@@ -79,11 +82,13 @@ export function createCopilotTool(scanner) {
             path: file.path,
             kind: file.kind,
             title: file.title,
+            ...(file.invoke === '' ? {} : { invoke: file.invoke }),
             ...(file.description === '' ? {} : { description: file.description }),
             ...(file.applyTo === '' ? {} : { applyTo: file.applyTo }),
             ...(file.mode === '' ? {} : { mode: file.mode }),
             bytes: file.bytes,
           })),
+          invocable: scanner.catalogOf(snapshot),
           errors: snapshot.errors,
         };
       }
@@ -98,11 +103,12 @@ export function createCopilotTool(scanner) {
         path: file.path,
         kind: file.kind,
         title: file.title,
+        ...(file.invoke === '' ? {} : { invoke: file.invoke }),
         ...(file.description === '' ? {} : { description: file.description }),
         ...(file.applyTo === '' ? {} : { applyTo: file.applyTo }),
         ...(file.mode === '' ? {} : { mode: file.mode }),
         bytes: file.bytes,
-        text: renderPlainText(file.blocks),
+        text: file.text,
       };
     },
   };
