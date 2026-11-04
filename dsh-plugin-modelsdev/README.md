@@ -129,6 +129,17 @@ default). Providers pi-ai does not ship are always written with `api`,
 so models.dev endpoints such as `https://api.minimax.io/anthropic/v1` are written
 as `https://api.minimax.io/anthropic`. OpenAI protocols keep their `/v1`.
 
+**Compatibility headers.** A provider whose endpoint rejects session-less
+requests gets the header it demands written into the profile. opencode answers
+`400 {"type":"MissingSessionID"}` to any request without an
+`x-opencode-session` header — a header only its own official client used to
+send — so importing it writes `headers: { 'x-opencode-session': 'dsh-…' }` with
+a stable generated value. pi-ai merges a profile's `headers` into every request,
+so the route works whether it was written as a catalog route or a
+hand-declared one. The value is a routing identifier, not a real opencode
+session: edit or remove the entry in the settings document if the provider's
+requirements change.
+
 ## Architecture
 
 | Half | File | Role |
@@ -163,6 +174,12 @@ mirror with the `DSH_MODELSDEV_URL` environment variable.
   unreachable.
 - **Non-text models are excluded.** Embedding, image, speech and similar models
   cannot be driven by the DSH model loop.
+- **opencode rides a synthetic session header.** Its endpoint answers
+  `400 MissingSessionID` to any request without `x-opencode-session`, so the
+  import writes one with a generated value. The value is a routing identifier,
+  not a real opencode session: if the provider starts validating the header
+  against your account, edit or remove the `headers` entry in the settings
+  document.
 
 ## Install and update
 
@@ -188,8 +205,14 @@ stale fallback, HTTP route and every pure mapping used by the browser half:
 
 ```text
 node scripts/verify-catalog.mjs
-# verify-catalog: 107 assertions passed
+# verify-catalog: 120 assertions passed
 ```
+
+`verify-catalog.mjs` covers the catalog projection (model filtering, reasoning
+aliases, api normalization), cache expiry / forced refresh / stale fallback,
+concurrent fetches, the HTTP route's 200/404/405/502 responses, and every pure
+mapping used by the browser half (protocol inference, endpoint normalization,
+credential references, model profiles, import validation, compatibility headers).
 
 The plugin was installed into the desktop profile and verified live: the catalog
 route returned 233 providers / 7,619 models (1.09 MB) and the

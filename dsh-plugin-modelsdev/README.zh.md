@@ -116,6 +116,14 @@ pi-ai 完全不认识的供应商则始终写 `api`、`baseURL` 和全量元数�
 models.dev 的 `https://api.minimax.io/anthropic/v1` 会被写成
 `https://api.minimax.io/anthropic`。OpenAI 协议保留 `/v1`。
 
+**兼容请求头。** 端点拒绝「不带会话」的请求的供应商，会在写入 profile 时补上
+它要求的头。opencode 对任何不带 `x-opencode-session` 的请求直接返回
+`400 {"type":"MissingSessionID"}`——这个头历来只有它的官方客户端会发——因此
+导入时会写入 `headers: { 'x-opencode-session': 'dsh-…' }`，值为导入时生成的
+稳定标识。pi-ai 会把 profile 的 `headers` 合并进每个请求，所以无论路由写成
+目录形状还是手写形状都生效。这个值只是路由标识，不是 opencode 账号下的真实
+会话：供应商要求变化时，直接在设置文档里改或删掉这一项。
+
 ## 架构
 
 | 半 | 文件 | 职责 |
@@ -142,6 +150,10 @@ models.dev 的 `https://api.minimax.io/anthropic/v1` 会被写成
 - **目录是快照。** 每个进程缓存 6 小时，刷新按钮可跳过缓存；models.dev 不可达时
   返回旧缓存。
 - **非文本模型不导入。** 嵌入、图像、语音等模型无法被 DSH 的模型循环驱动。
+- **opencode 靠一个合成会话头工作。** 它的端点对任何不带
+  `x-opencode-session` 的请求返回 `400 MissingSessionID`，因此导入时会写入
+  一个生成值。该值只是路由标识，不是 opencode 账号下的真实会话：如果供应商
+  开始拿它校验账号，请在设置文档里修改或删除 `headers` 这一项。
 
 ## 安装与更新
 
@@ -166,8 +178,12 @@ plugin_manager install_bundle   target: file:E:\repos\dsh-plugins\dsh-plugin-mod
 
 ```text
 node scripts/verify-catalog.mjs
-# verify-catalog: 107 assertions passed
+# verify-catalog: 120 assertions passed
 ```
+
+自检覆盖目录投影（模型过滤、推理别名、api 归一化）、缓存过期 / 强制刷新 /
+失败回退、并发抓取、HTTP 路由的 200/404/405/502 响应，以及浏览器半的全部纯
+映射（协议推断、端点归一化、凭据引用、模型 profile、导入校验、兼容请求头）。
 
 插件已安装进 desktop profile 并做过在线验证：目录路由返回 233 个供应商 /
 7,619 个模型（1.09 MB），`settings.models.footer` 席位报告

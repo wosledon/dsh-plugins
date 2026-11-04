@@ -146,7 +146,7 @@ The plugin ships a self-check that runs with no third-party dependencies:
 
 ```text
 dsh-plugin-modelsdev
-  node scripts/verify-catalog.mjs      107 assertions
+  node scripts/verify-catalog.mjs      120 assertions
 
 dsh-plugin-remote-dsh
   node scripts/verify-contract.mjs      80 assertions

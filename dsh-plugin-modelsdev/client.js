@@ -92,6 +92,7 @@ window.__ModuleLoader__.load({
       apiKeyUnknown: '无法确认密钥状态',
       apiKeyHint: '密钥写入 DSH 凭据库，不进入设置文档。',
       nativeAuthHint: '留空则沿用供应商原生认证（不写 apiKeyEnv）。',
+      sessionHeaderHint: '该供应商的接口要求每个请求携带此会话头（缺失即 400 MissingSessionID）；导入时会写入一个稳定值，之后可在设置文档中修改。',
       modelsTitle: '选择模型',
       searchModel: '搜索模型（名称或 ID）',
       selectAll: '全选',
@@ -168,6 +169,7 @@ window.__ModuleLoader__.load({
       apiKeyUnknown: 'Key status unavailable',
       apiKeyHint: 'The key is stored in the DSH credential store, never in the settings document.',
       nativeAuthHint: 'Leave empty to keep the provider’s native authentication (no apiKeyEnv is written).',
+      sessionHeaderHint: 'This provider’s endpoint requires this session header on every request (its absence is a 400 MissingSessionID); the import writes a stable value, editable later in the settings document.',
       modelsTitle: 'Models',
       searchModel: 'Search models (name or ID)',
       selectAll: 'Select all',
@@ -347,6 +349,56 @@ window.__ModuleLoader__.load({
       return next;
     }
 
+    /**
+     * 需要额外请求头才能工作的供应商，值是必须携带的请求头名。
+     *
+     * opencode 的接口要求每个请求带 `x-opencode-session`（会话亲和路由），
+     * 缺失时服务端直接 400 MissingSessionID——这个头历来只有 opencode 官方
+     * 客户端会发。pi-ai 的已安装目录条目本应替需要它的供应商代发（DSH
+     * 适配器把 `sendSessionAffinityHeaders` / `sessionAffinityFormat` 两个
+     * compat 字段标为不可配置，理由正是「目录会代发」），但目录滞后于服务端
+     * 新要求时，按目录形状写出的路由照样发不出这个头，手写路由则从来不发。
+     *
+     * 因此在写入 profile 时显式补一个稳定的会话头：llm-pi-ai 的 profile
+     * 支持 `headers` 字典，适配器会把它合并进每个请求，与路由形状（目录
+     * 路由还是手写路由）无关。值只是给服务端路由用的稳定标识，不是
+     * opencode 账号下的真实会话；写进设置文档后可以随时手工改。
+     */
+    const SESSION_HEADER_PROVIDERS = new Map([
+      ['opencode', 'x-opencode-session'],
+      ['opencode-go', 'x-opencode-session'],
+    ]);
+
+    /** 供应商需要的兼容请求头名；不需要时返回 undefined。 */
+    function sessionHeaderNameFor(provider) {
+      const id = isObject(provider) && typeof provider.id === 'string' ? provider.id : '';
+      return SESSION_HEADER_PROVIDERS.get(id);
+    }
+
+    /** 生成一个稳定的会话标识：可读前缀 + 随机后缀，每次导入各不相同。 */
+    function newSessionHeaderValue() {
+      const crypto = globalThis.crypto;
+      const random = crypto !== null && typeof crypto === 'object' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+      return 'dsh-' + random;
+    }
+
+    /**
+     * 供应商导入时要补的兼容请求头；不需要时返回 undefined。
+     *
+     * @param {object} provider models.dev 的紧凑供应商条目
+     * @param {{value?: string}} [options] 注入固定值，供自检与复现使用
+     */
+    function sessionHeadersFor(provider, options = {}) {
+      const name = sessionHeaderNameFor(provider);
+      if (name === undefined) return undefined;
+      const value = isObject(options) && typeof options.value === 'string' && options.value !== ''
+        ? options.value
+        : newSessionHeaderValue();
+      return { [name]: value };
+    }
+
     /** 默认路由 id：小写、非字母数字折成连字符，以字母或数字开头。 */
     function defaultRoute(provider) {
       const raw = provider !== null && provider !== undefined && typeof provider.id === 'string' ? provider.id : '';
@@ -461,7 +513,14 @@ window.__ModuleLoader__.load({
       return null;
     }
 
-    /** 构造写入设置文档的 provider profile。 */
+    /**
+     * 构造写入设置文档的 provider profile。
+     *
+     * @param {object} detail
+     * @param {object} directory 以 provider id 为键的 pi-ai 目录条目
+     * @param {{apiKeyConfigured?: boolean, sessionId?: string}} [options]
+     *   `sessionId` 注入兼容请求头的固定值，省略时每次导入生成一个新值。
+     */
     function buildProfile(detail, directory, options = {}) {
       const entry = isObject(directory) ? directory[detail.providerId] : undefined;
       const catalogKnown = isObject(entry) && entry.declared !== true;
@@ -488,6 +547,10 @@ window.__ModuleLoader__.load({
       const baseURL = typeof detail.baseURL === 'string' ? detail.baseURL.trim() : '';
       if (baseURL !== '') profile.baseURL = baseURL;
       if (typeof detail.protocol === 'string' && detail.protocol !== '') profile.api = detail.protocol;
+      // 端点强制要求会话头的供应商（opencode）：无论路由形状都补上，否则
+      // 请求会以 400 MissingSessionID 被服务端拒绝。
+      const headers = sessionHeadersFor(provider, { value: options.sessionId });
+      if (headers !== undefined) profile.headers = headers;
       return profile;
     }
 
@@ -911,6 +974,9 @@ window.__ModuleLoader__.load({
         const provider = detail === null ? undefined : providerMap[detail.providerId];
         const entry = detail === null ? undefined : directory[detail.providerId];
         const catalogKnown = isObject(entry) && entry.declared !== true;
+        const sessionHeaderName = detail === null || provider === undefined
+          ? undefined
+          : sessionHeaderNameFor(provider);
         const modelById = detail === null ? new Map() : providerModelsById(detail.provider);
         const filteredModels = detail === null || !Array.isArray(detail.provider.models)
           ? []
@@ -1108,6 +1174,13 @@ window.__ModuleLoader__.load({
                         : h('span', null, isObject(entry) && isObject(entry.nativeAuth)
                           ? t('nativeAuthHint')
                           : t('apiKeyHint')),
+                  ),
+                ),
+                sessionHeaderName === undefined ? null : h('div', { className: 'mdv-field mdv-field--wide' },
+                  h('span', { className: 'mdv-hint' },
+                    h('span', { className: 'mdv-mono' }, sessionHeaderName),
+                    ' · ',
+                    t('sessionHeaderHint'),
                   ),
                 ),
               );
@@ -1346,6 +1419,8 @@ window.__ModuleLoader__.load({
     const internals = {
       protocolFor,
       normalizeBaseURL,
+      sessionHeaderNameFor,
+      sessionHeadersFor,
       defaultRoute,
       freeRoute,
       credentialRefFor,

@@ -271,6 +271,18 @@ equal(
   'OpenAI base URLs keep /v1 and lose trailing slashes',
 );
 
+equal(pure.sessionHeaderNameFor({ id: 'opencode' }), 'x-opencode-session', 'opencode is known to need the session header');
+equal(pure.sessionHeaderNameFor({ id: 'opencode-go' }), 'x-opencode-session', 'the opencode Go route needs the same header');
+equal(pure.sessionHeaderNameFor({ id: 'acme' }), undefined, 'other providers need no session header');
+equal(pure.sessionHeaderNameFor(undefined), undefined, 'a missing provider needs no session header');
+equal(pure.sessionHeadersFor({ id: 'acme' }), undefined, 'no headers are invented for ordinary providers');
+equal(
+  pure.sessionHeadersFor({ id: 'opencode' }, { value: 'dsh-fixed' }),
+  { 'x-opencode-session': 'dsh-fixed' },
+  'an injected session value rides verbatim',
+);
+ok(/^dsh-.{8,}$/.test(pure.sessionHeadersFor({ id: 'opencode' })['x-opencode-session']), 'a generated session value carries the dsh prefix');
+
 equal(pure.defaultRoute({ id: 'Acme AI' }), 'acme-ai', 'route ids are lowercased and hyphenated');
 equal(pure.defaultRoute({ id: '___' }), 'provider', 'empty route ids fall back');
 equal(pure.freeRoute('acme', {}), 'acme', 'free route returns the base when unused');
@@ -377,6 +389,41 @@ const nativeConfigured = pure.buildProfile({ ...baseDetail, apiKey: '' }, native
 equal(nativeConfigured.apiKeyEnv, 'ACME_API_KEY', 'a configured reference is kept for native-auth routes');
 const nativeKey = pure.buildProfile({ ...baseDetail, apiKey: 'sk-test' }, nativeDirectory);
 equal(nativeKey.apiKeyEnv, 'ACME_API_KEY', 'typing a key writes the reference even for native-auth routes');
+
+const opencodeProvider = {
+  id: 'opencode',
+  name: 'OpenCode',
+  api: 'https://opencode.ai/zen/v1',
+  npm: '@ai-sdk/opencode',
+  env: ['OPENCODE_API_KEY'],
+  models: [{ id: 'claude-sonnet-4-5', context: 200000 }],
+};
+const opencodeDetail = {
+  providerId: 'opencode',
+  provider: opencodeProvider,
+  route: 'opencode',
+  displayName: 'OpenCode',
+  protocol: 'openai-completions',
+  baseURL: 'https://opencode.ai/zen/v1',
+  selected: new Set(['claude-sonnet-4-5']),
+  installed: new Set(['claude-sonnet-4-5']),
+};
+const opencodeDirectory = { opencode: { provider: 'opencode', declared: false } };
+
+const opencodeCatalogProfile = pure.buildProfile(
+  { ...opencodeDetail, protocol: '', baseURL: '' },
+  opencodeDirectory,
+  { sessionId: 'dsh-test-session' },
+);
+equal(opencodeCatalogProfile.headers, { 'x-opencode-session': 'dsh-test-session' }, 'the opencode catalog route carries the session header');
+equal(opencodeCatalogProfile.api, undefined, 'the opencode catalog route stays a catalog route');
+equal(opencodeCatalogProfile.models, [{ id: 'claude-sonnet-4-5' }], 'the opencode catalog route keeps minimal model entries');
+
+const opencodeCustomProfile = pure.buildProfile(opencodeDetail, customDirectory, { sessionId: 'dsh-test-session' });
+equal(opencodeCustomProfile.headers, { 'x-opencode-session': 'dsh-test-session' }, 'a hand-declared opencode route carries the session header');
+equal(opencodeCustomProfile.api, 'openai-completions', 'a hand-declared opencode route keeps its protocol');
+
+equal(pure.buildProfile(baseDetail, customDirectory).headers, undefined, 'ordinary providers get no headers key');
 
 equal(pure.capabilityOf({ id: 'x', api: 'https://x/v1' }, {}), 'ready', 'providers with an endpoint are directly importable');
 equal(pure.capabilityOf({ id: 'x' }, {}), 'needs-endpoint', 'providers without an endpoint need manual input');
